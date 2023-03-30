@@ -1,7 +1,10 @@
+import Base: setproperty!
+
 abstract type Top end
 abstract type Object <: Top end
 abstract type Class end
 
+#@defclass(class, [superclasses], [slot1, slot2, ...]) returns a new class type
 macro defclass(name, superclasses, slots, kwargs...)
     begin
         println("Executing @defclass macro with arguments: ")
@@ -33,7 +36,7 @@ macro defclass(name, superclasses, slots, kwargs...)
         supers = Union{_supers...} # TODO
         println(supers)
 
-        res = "struct " * string(name) * " <: " * string(supers) * "\n"
+        res = "mutable struct " * string(name) * " <: " * string(supers) * "\n"
         for slot in _slots res *= string(slot) * "\n" end
         res *= "end"
         expr = Meta.parse(res)
@@ -43,23 +46,76 @@ end
 
 @defclass(ComplexNumbers, [], [real, imag])
 
+# new(class, slot1=1, slot2=2, ...) returns new instance of class
 function new(class ; kwargs...)
     to_be_exec = string(class) * "("
     if length(kwargs) != length(fieldnames(class))
-        println("Deu cocó")
-    end
-
-    for field in fieldnames(class)
-        for key in keys(kwargs)
-            if key == field
-                to_be_exec *= string(kwargs[key]) * ", "
+        println("Error in function call \"new\": new(class, slot1, slot2, ...)")
+    else
+        count = 0
+        for field in fieldnames(class)
+            for key in keys(kwargs)
+                if key == field
+                    to_be_exec *= string(kwargs[key]) * ", "
+                    count += 1
+                end
             end
         end
+
+        if count != length(fieldnames(class))
+            println("Error in function call \"new\": wrong class slot")
+        else
+            to_be_exec *= ")"
+            expr = Meta.parse(to_be_exec)
+            return eval(expr)
+        end
     end
-    to_be_exec *= ")"
-    expr = Meta.parse(to_be_exec)
-    return eval(expr)    
 end
 
-#@defclass(ComplexNumbers, [], [real, imag])
-#cn = new(ComplexNumbers, real=1, imag=2)
+# getproperty(obj, slot) returns obj.slot
+function getproperty(obj, slot ; kwargs...)
+    to_be_exec = string(obj) * "."
+    if length(kwargs) != 0
+        println("Error in function call \"getproperty\": getproperty(object, slot)")
+    else
+        count = 0
+        for field in fieldnames(typeof(obj))
+            if slot == field
+                to_be_exec *= string(slot)
+            else
+                count += 1
+            end
+        end
+    
+        if count == length(fieldnames(typeof(obj)))
+            println("Error in function call \"getproperty\": object does not have slot")
+        else
+            expr = Meta.parse(to_be_exec)
+            return eval(expr)
+        end
+    end
+end
+
+# getproperty(obj, slot) returns obj.slot
+function setproperty!(obj, slot, value ; kwargs...)
+    to_be_exec = string(obj) * "."
+    if length(kwargs) != 0
+        println("Error in function call \"setproperty!\": setproperty!(object, slot, value)")
+    else
+        count = 0
+        for field in fieldnames(typeof(obj))
+            if slot == field
+                to_be_exec *= string(slot) * " = " * value
+            else
+                count += 1
+            end
+        end
+
+        if count == length(fieldnames(typeof(obj)))
+            println("Error in function call \"setproperty!\": object does not have slot")
+        else
+            expr = Meta.parse(to_be_exec)
+            return eval(expr)
+        end 
+    end
+end
