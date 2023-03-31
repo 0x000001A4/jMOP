@@ -1,31 +1,106 @@
-abstract type Top end
-abstract type Object <: Top end
-abstract type Class end
+import Base: ==
 
-macro defclass(name, superclasses, slots, kwargs...)
-    begin
-        println("Executing @defclass macro with arguments: ")
-        println("Name of the class: $(string(name))")
-        println("Superclasses: $(string(superclasses))")
-        println("Slots: $(string(slots))")
-        _supers = eval(superclasses)
-        _slots = eval(slots)
+function isMetaobject(object)
+    # Might need 1 more class_of
+    if isa(object, Vector{Any})
+        if length(object) == 0 || !isa(class_of(object), Vector{Any}) return false end
+        return class_of(class_of(object)) === Class
+    end
+    return false
+end
 
-        append!(_supers, [Object])
+function compareMetaobjects(metaobject1::Vector{Any}, metaobject2::Vector{Any}, compared=Set{Tuple{Vector{Any},Vector{Any}}})
+    print("m1: $metaobject1, m2: $metaobject2")
 
-        _meta = Class
-        _kwargs = eval(kwargs)
-        if length(kwargs) > 1
-            error("There should be at most 1 kwarg with the name metaclass")
-        elseif length(kwargs) == 1 && _kwargs[1].args[1] == :metaclass && typeof(_kwargs[1].args[2]) == Symbol
-            _meta = eval(_kwargs[1].args[2])
-        end
+    if metaobject1 === metaobject2 return true end
+    if length(metaobject1) != length(metaobject2) return false end
 
-        quote
-            struct $(Expr(:(<:), esc(name), Union{_supers...}))
-                $(for slot in _slots println(slot) end)
+    if (metaobject1, metaobject2) in compared return true end
+    push!(compared, (metaobject1, metaobject2))
+    for i in 1:length(metaobject1)
+        if isMetaobject(metaobject1[i]) && isMetaobject(metaobject2[i])
+            if !compareMetaobjects(metaobject1[i], metaobject2[i], compared)
+                return false
             end
+        elseif metaobject1[i] != metaobject[2]
+            return false
         end
+    end
+    return true
+end
 
+function ==(metaobject1::Vector, metaobject2::Vector)
+    # In order to avoid infinite recursion
+    if isMetaobject(metaobject1) && isMetaobject(metaobject2)
+        return compareMetaobjects(metaobject1, metaobject2)
+    end
+    return isequal(metaobject1,metaobject2)
+end
+
+Class = [
+    nothing, # class_of
+    :Class, # name
+    [], # direct_superclasses
+    [:name, :direct_superclasses, :direct_slots, :cpl, :slots, :direct_subclasses, :direct_methods], # direct_slots
+    [], # cpl
+    [:name, :direct_superclasses, :direct_slots, :cpl, :slots, :direct_subclasses, :direct_methods], # slots
+    [], # direct_subclasses
+    [] # direct_methods
+]
+
+Class[1] = Class
+Class[5] = [Class]
+
+Top = [Class, :Top, [], [], [Class], [], [], [], []]
+Object = [Class, :Object, [Top], [], [Class], [], [], [], []]
+
+GenericFunction = [
+    Class, # class_of
+    :GenericFunction, # name
+    [Object], # direct_superclasses
+    [:name, :methods], # direct_slots
+    [Class], # cpl
+    [:name, :methods], # slots
+    [], # direct_subclasses
+    [] # direct_methods
+]
+
+MultiMethod = [
+    Class, # class_of
+    :GenericFunction, # name
+    [Object], # direct_superclasses
+    [:specializers, :procedure, :generic_function], # direct_slots
+    [Class], # cpl
+    [:specializers, :procedure, :generic_function], # slots
+    [], # direct_subclasses
+    [] # direct_methods
+]
+
+
+
+class_of(instance) = instance[1]
+class_name(instance) = class_of(instance)[2]
+
+# Should specialize for Objects
+function print_object(obj)
+    print("<$(class_name(class_of(obj))) $(string(objectid(obj), base=62))>")
+end
+
+function Base.getproperty(instance::Vector, property::Symbol)
+    # instance.property resolves to:
+    # -> instance asking its class for the index of the property in the slots
+    # -> using this index to access its slots (+1 because of the first slots representing the class_of)
+    if length(instance) > 0 && isMetaobject(instance)
+        instance[1+findall(slot -> slot == property, class_of(instance)[6])[1]]
+    end
+end
+
+function Base.setproperty!(instance::Vector, property::Symbol, value)
+    # instance.property = value resolves to:
+    # -> instance asking its class for the index of the property in the slots
+    # -> using this index to access its slots (+1 because of the first slots representing the class_of)
+    # -> pushing a value
+    if length(instance) > 0 && isMetaobject(instance)
+        instance[1+findall(slot -> slot == property, class_of(instance)[6])[1]] = value
     end
 end
