@@ -1,4 +1,5 @@
 import Base: ==
+using DataStructures
 
 function isMetaobject(object)
     # Might need 1 more class_of
@@ -51,23 +52,21 @@ Class = [
 Class[1] = Class
 Class[5] = [Class]
 
-Top = [Class, :Top, [], [], [Class], [], [], [], []]
-Object = [Class, :Object, [Top], [], [Class], [], [], [], []]
+Top = [Class, :Top, [], [], [Class], [], [], []]
+Object = [Class, :Object, [Top], [], [Class], [], [], []]
 
 
 macro defclass(name, direct_superclasses, direct_slots)
     return quote
-        push!($(direct_superclasses), Object)
-        global $(esc(name))
-        $(esc(name)) = [
-            $(esc(Class)),
-            $(QuoteNode(name)),
-            $(esc(direct_superclasses)),
-            $(esc(direct_slots)),
-            [],
-            $(esc(direct_slots)),
-            [],
-            [],
+        global $(esc(name)) = [
+            Class, # class_of
+            $(QuoteNode(name)), # name
+            vcat($(esc(direct_superclasses)), [Object]), # direct_superclasses
+            $(esc(direct_slots)), # direct_slots
+            [], # cpl
+            $(esc(direct_slots)), # slots
+            [], # direct_subclasses
+            [], # direct_methods
         ]
     end
 end
@@ -77,6 +76,21 @@ end
 
 class_of(instance) = instance[1]
 class_name(instance) = class_of(instance)[2]
+
+function compute_cpl(instance)
+    cpl = []
+    supersQueue = Queue{Any}()
+    enqueue!(supersQueue, instance)
+    while !isempty(supersQueue)
+        super = dequeue!(supersQueue)
+        for _super in super.direct_superclasses 
+            enqueue!(supersQueue, _super) 
+        end
+        push!(cpl, super)
+    end
+    return cpl
+end
+
 
 # Should specialize for Objects
 function print_object(obj)
