@@ -54,29 +54,26 @@ Class[5] = [Class]
 Top = [Class, :Top, [], [], [Class], [], [], [], []]
 Object = [Class, :Object, [Top], [], [Class], [], [], [], []]
 
-GenericFunction = [
-    Class, # class_of
-    :GenericFunction, # name
-    [Object], # direct_superclasses
-    [:name, :methods], # direct_slots
-    [Class], # cpl
-    [:name, :methods], # slots
-    [], # direct_subclasses
-    [] # direct_methods
-]
 
-MultiMethod = [
-    Class, # class_of
-    :GenericFunction, # name
-    [Object], # direct_superclasses
-    [:specializers, :procedure, :generic_function], # direct_slots
-    [Class], # cpl
-    [:specializers, :procedure, :generic_function], # slots
-    [], # direct_subclasses
-    [] # direct_methods
-]
+macro defclass(name, direct_superclasses, direct_slots)
+    return quote
+        push!($(direct_superclasses), Object)
+        global $(esc(name))
+        $(esc(name)) = [
+            $(esc(Class)),
+            $(QuoteNode(name)),
+            $(esc(direct_superclasses)),
+            $(esc(direct_slots)),
+            [],
+            $(esc(direct_slots)),
+            [],
+            [],
+        ]
+    end
+end
 
-
+@defclass(GenericFunction, [], [:name, :lambda_list, :methods])
+@defclass(MultiMethod, [], [:lambda_list, :specializers, :procedure, :env, :generic_function])
 
 class_of(instance) = instance[1]
 class_name(instance) = class_of(instance)[2]
