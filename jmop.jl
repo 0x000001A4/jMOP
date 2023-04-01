@@ -74,6 +74,43 @@ end
 @defclass(GenericFunction, [], [:name, :lambda_list, :methods])
 @defclass(MultiMethod, [], [:lambda_list, :specializers, :procedure, :env, :generic_function])
 
+macro defgeneric(expr)
+    dump(expr)
+    name = expr.args[1]
+    lambdaList = expr.args[2:end]
+    return quote
+        global $(esc(name)) = [
+            GenericFunction, # class_of
+            $(QuoteNode(name)), # name
+            $(esc(lambdaList)), # lambda-list
+            [], # methods
+        ]
+    end
+end
+
+
+macro defmethod(expr)
+    name = expr.args[1].args[1]
+    lambda_list = [_expr.args[1] for _expr in expr.args[1].args[2:end]]
+    specializers = [_expr.args[2] for _expr in expr.args[1].args[2:end]]
+    procedure = expr.args[2]
+
+    return quote
+        if !isdefined(Main, $(QuoteNode(name)))
+            @defgeneric $(name)($(lambda_list...))
+        end
+
+        push!($(name)[4], [
+            MultiMethod, # class_of
+            $(esc(lambda_list)), # lambda_list
+            $(esc(specializers)), # specializers
+            $(QuoteNode(procedure)), # procedure
+            [], # environment
+            $(esc(name)) # generic_function
+        ])
+    end
+end
+
 class_of(instance) = instance[1]
 class_name(instance) = class_of(instance)[2]
 
