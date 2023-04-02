@@ -185,3 +185,24 @@ function compute_cpl(instance)
     end
     return cpl
 end
+
+function new(class ; kwargs...)
+    instance = []
+    append!(instance, [class])
+    slots = []
+    for slot in class[6]
+        if slot in keys(kwargs)
+            append!(slots, [kwargs[slot]])
+        else
+            append!(slots, [Nothing]) # non initialized slot            
+        end
+    end
+    append!(instance, slots)
+    return instance
+    # instance = [
+    #    class,
+    #    slot1_val,
+    #    slot2_val,
+    #    ...
+    # ]
+end
