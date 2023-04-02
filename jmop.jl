@@ -170,3 +170,35 @@ class_direct_methods(instance) = instance.direct_methods
 
 generic_methods(generic_function) = generic_function.methods
 method_specializers(method) = method.specializers
+
+function new(class ; kwargs...)
+    instance = []
+    append!(instance, [class])
+    slots = []
+    for slot in class[6]
+        if slot in keys(kwargs)
+            append!(slots, [kwargs[slot]])
+        else
+            append!(slots, [Nothing]) # non initialized slot            
+        end
+    end
+    append!(instance, slots)
+    return instance
+    # instance = [
+    #    class,
+    #    slot1_val,
+    #    slot2_val,
+    #    ...
+    # ]
+end
+
+Class = [
+    nothing, # class_of
+    :Class, # name
+    [], # direct_superclasses
+    [:name, :direct_superclasses, :direct_slots, :cpl, :slots, :direct_subclasses, :direct_methods], # direct_slots
+    [], # cpl
+    [:name, :direct_superclasses, :direct_slots, :cpl, :slots, :direct_subclasses, :direct_methods], # slots
+    [], # direct_subclasses
+    [] # direct_methods
+]
