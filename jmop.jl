@@ -1,4 +1,5 @@
 import Base: ==
+import Base.show
 using DataStructures
 
 function isMetaobject(object)
@@ -54,6 +55,7 @@ Class[5] = [Class]
 
 Top = [Class, :Top, [], [], [Class], [], [], []]
 Object = [Class, :Object, [Top], [], [Class], [], [], []]
+Class[3] = [Object]
 
 
 macro defclass(name, direct_superclasses, direct_slots)
@@ -92,7 +94,7 @@ end
 macro defmethod(expr)
     name = expr.args[1].args[1]
     lambda_list = [_expr.args[1] for _expr in expr.args[1].args[2:end]]
-    specializers = [_expr.args[2] for _expr in expr.args[1].args[2:end]]
+    specializers = [eval(_expr.args[2]) for _expr in expr.args[1].args[2:end]]
     procedure = expr.args[2]
 
     return quote
@@ -111,9 +113,6 @@ macro defmethod(expr)
     end
 end
 
-class_of(instance) = instance[1]
-class_name(instance) = class_of(instance)[2]
-
 function compute_cpl(instance)
     cpl = []
     supersQueue = Queue{Any}()
@@ -126,12 +125,6 @@ function compute_cpl(instance)
         push!(cpl, super)
     end
     return cpl
-end
-
-
-# Should specialize for Objects
-function print_object(obj)
-    print("<$(class_name(class_of(obj))) $(string(objectid(obj), base=62))>")
 end
 
 function Base.getproperty(instance::Vector, property::Symbol)
@@ -152,3 +145,28 @@ function Base.setproperty!(instance::Vector, property::Symbol, value)
         instance[1+findall(slot -> slot == property, class_of(instance)[6])[1]] = value
     end
 end
+
+# Should specialize for Objects
+function print_object(obj, io)
+    print(io, "<$(class_name(class_of(obj))) $(string(objectid(obj), base=62))>")
+end
+
+function Base.show(io::IO, ::MIME"text/plain", object::Vector)
+    if (isMetaobject(object))
+        print_object(object, io)
+    else 
+        show(io, object)
+    end
+end
+
+# Introspection
+class_of(instance) = instance[1]
+class_name(instance) = instance.name
+class_direct_slots(instance) = instance.direct_slots
+class_slots(instance) = instance.slots
+class_direct_superclasses(instance) = instance.direct_superclasses
+class_cpl(instance) = instance.cpl
+class_direct_methods(instance) = instance.direct_methods
+
+generic_methods(generic_function) = generic_function.methods
+method_specializers(method) = method.specializers
