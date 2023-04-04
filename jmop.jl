@@ -32,6 +32,10 @@ function Base.setproperty!(instance::Metaobject, property::Symbol, value::Any)
     end
 end
 
+function Base.length(instance::Metaobject)
+    return length(getfield(instance, :value))
+end
+
 class_name(instance::Metaobject) = instance.name
 class_direct_slots(instance::Metaobject) = instance.direct_slots
 class_slots(instance::Metaobject) = instance.slots
@@ -44,10 +48,10 @@ method_specializers(method::Metaobject) = method.specializers
 
 isMetaobject(object) = isa(object, Metaobject)
 
-function compareMetaobjects(metaobject1, metaobject2, compared=Set{Tuple{Metaobject,Metaobject}})
+function compareMetaobjects(metaobject1, metaobject2, compared=Set{Tuple{Metaobject,Metaobject}}())
     if metaobject1 === metaobject2 return true end
+    if length(metaobject1) != length(metaobject2) return false end
     if (metaobject1, metaobject2) in compared return true end
-
     push!(compared, (metaobject1, metaobject2))
 
     for i in 1:length(metaobject1)
@@ -55,7 +59,7 @@ function compareMetaobjects(metaobject1, metaobject2, compared=Set{Tuple{Metaobj
             if !compareMetaobjects(metaobject1[i], metaobject2[i], compared)
                 return false
             end
-        elseif metaobject1[i] != metaobject[2]
+        elseif metaobject1[i] != metaobject2[2]
             return false
         end
     end
@@ -105,6 +109,14 @@ Object = Metaobject([
 
 Class[3] = [Object]
 
+function print_method(class, io)
+    print(io, "<$(class_name(class_of(class))) $(class_name(class.generic_function))($(join([string(lambda, "::", class_name(specializer)) for (lambda,specializer) in zip(class.lambda_list, class.specializers)], ", ")))>")
+end
+
+function print_function(class, io)
+    print(io, "<$(class_name(class_of(class))) $(class_name(class)) with $(length(generic_methods(class))) $(length(generic_methods(class)) == 1 ? "method" : "methods")>")
+end
+
 function print_class(class, io)
     print(io, "<$(class_name(class_of(class))) $(class_name(class))>")
 end
@@ -114,7 +126,15 @@ function print_object(obj, io)
 end
 
 function Base.show(io::IO, ::MIME"text/plain", metaobject::Metaobject)
-    print_class(metaobject, io)
+    if class_of(metaobject) == Class
+        print_class(metaobject, io)
+    elseif class_of(metaobject) == Object
+        print_object(metaobject, io)
+    elseif class_of(metaobject) == GenericFunction
+        print_function(metaobject, io)
+    elseif class_of(metaobject) == MultiMethod
+        print_method(metaobject, io)
+    end
 end
 
 macro defclass(name, direct_superclasses, direct_slots)
@@ -136,7 +156,6 @@ end
 @defclass(MultiMethod, [], [:lambda_list, :specializers, :procedure, :env, :generic_function])
 
 macro defgeneric(expr)
-    dump(expr)
     name = expr.args[1]
     lambdaList = expr.args[2:end]
     return quote
@@ -161,14 +180,14 @@ macro defmethod(expr)
             @defgeneric $(name)($(lambda_list...))
         end
 
-        push!($(name)[4], [
+        push!($(name)[4], Metaobject([
             MultiMethod, # class_of
             $(esc(lambda_list)), # lambda_list
             $(esc(specializers)), # specializers
             $(QuoteNode(procedure)), # procedure
             [], # environment
             $(esc(name)) # generic_function
-        ])
+        ]))
     end
 end
 
