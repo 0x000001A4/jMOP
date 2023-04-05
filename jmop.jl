@@ -155,17 +155,35 @@ end
 @defclass(GenericFunction, [], [:name, :lambda_list, :methods])
 @defclass(MultiMethod, [], [:lambda_list, :specializers, :procedure, :env, :generic_function])
 
+function function_dispatch(name::Metaobject, lambdaList...)
+    println("function_dispatch")
+    println(lambdaList)
+end
+
+
+function create_generic_function(name, lambdaList)
+    if !isdefined(Main, name)
+        func_decl = Expr(:call, Expr(:(::), esc(name), :Metaobject), esc.(lambdaList)...)
+        procedure = Expr(:block, Expr(:call, :function_dispatch, esc(name), esc.(lambdaList)...))
+        func_def = Expr(:function, func_decl, procedure)
+
+        quote
+            global $(esc(name)) = $(esc(Metaobject))([
+                GenericFunction, # class_of
+                $(QuoteNode(name)), # name
+                $(esc(lambdaList)), # lambda-list
+                [], # methods
+            ])
+
+            $(func_def)
+        end
+    end
+end
+
 macro defgeneric(expr)
     name = expr.args[1]
     lambdaList = expr.args[2:end]
-    return quote
-        global $(esc(name)) = $(esc(Metaobject))([
-            GenericFunction, # class_of
-            $(QuoteNode(name)), # name
-            $(esc(lambdaList)), # lambda-list
-            [], # methods
-        ])
-    end
+    create_generic_function(name, lambdaList)
 end
 
 
@@ -176,11 +194,9 @@ macro defmethod(expr)
     procedure = expr.args[2]
 
     return quote
-        if !isdefined(Main, $(QuoteNode(name)))
-            @defgeneric $(name)($(lambda_list...))
-        end
+        $(create_generic_function(name, lambda_list))
 
-        push!($(name)[4], Metaobject([
+        push!($(esc(name))[4], Metaobject([
             MultiMethod, # class_of
             $(esc(lambda_list)), # lambda_list
             $(esc(specializers)), # specializers
