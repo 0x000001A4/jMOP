@@ -108,9 +108,8 @@ Object = Metaobject([
 ])
 
 Class[3] = [Object]
-
 function print_method(class, io)
-    print(io, "<$(class_name(class_of(class))) $(class_name(class.generic_function))($(join([string(lambda, "::", class_name(specializer)) for (lambda,specializer) in zip(class.lambda_list, class.specializers)], ", ")))>")
+    print(io, "<$(class_name(class_of(class))) $(class_name(class.generic_function))($(join([string(class_name(specializer)) for specializer in class.specializers], ", ")))>")
 end
 
 function print_function(class, io)
@@ -126,30 +125,26 @@ function print_object(obj, io)
 end
 
 function Base.show(io::IO, ::MIME"text/plain", metaobject::Metaobject)
-    if class_of(metaobject) == Class
+    if class_of(metaobject) === Class
         print_class(metaobject, io)
-    elseif class_of(metaobject) == Object
+    elseif class_of(metaobject) === Object
         print_object(metaobject, io)
-    elseif class_of(metaobject) == GenericFunction
+    elseif class_of(metaobject) === GenericFunction
         print_function(metaobject, io)
-    elseif class_of(metaobject) == MultiMethod
+    elseif class_of(metaobject) === MultiMethod
         print_method(metaobject, io)
     end
 end
 
 macro defclass(name, direct_superclasses, direct_slots)
-    sym_slots = []
-    for slot in eval(direct_slots)
-        append!(sym_slots, [Symbol(slot)])
-    end
     return quote
         global $(esc(name)) = $(esc(Metaobject))([
             Class, # class_of
             $(QuoteNode(name)), # name
             vcat($(esc(direct_superclasses)), [$(esc(Object))]), # direct_superclasses
-            $(esc(sym_slots)), # direct_slots
+            $(esc(direct_slots)), # direct_slots
             [$(esc(Class))], # cpl
-            $(esc(sym_slots)), # slots
+            $(esc(direct_slots)), # slots
             [], # direct_subclasses
             [], # direct_methods
         ])
@@ -159,18 +154,58 @@ end
 @defclass(GenericFunction, [], [:name, :lambda_list, :methods])
 @defclass(MultiMethod, [], [:lambda_list, :specializers, :procedure, :env, :generic_function])
 
-function function_dispatch(name::Metaobject, lambdaList...)
-    println("function_dispatch")
-    println(lambdaList)
+
+function is_more_specific(method1, method2, args_cpl)
+    for i in 1:length(args_cpl)
+        index1 = findfirst(x -> x === method1.specializers[i], args_cpl[i])
+        index2 = findfirst(x -> x === method2.specializers[i], args_cpl[i])
+        
+        if index1 < index2
+            return true
+        elseif index1 > index2
+            return false
+        end
+    end
+    return false
 end
 
+function sort_by_specificity(methods, args)
+    sort!(methods, lt = (x, y) -> is_more_specific(x, y, [compute_cpl(class_of(arg)) for arg in args]))
+    return methods
+end
+
+function no_applicable_method(generic_function, args)
+    throw(error("ERROR:  No applicable method for function $(class_name(generic_function)) with arguments $(join([string(class_name(class_of(arg))) for arg in args], ", "))"))
+end
+
+function isApplicable(method, args) 
+    return all(spec in compute_cpl(class_of(arg)) for (arg,spec) in zip(args, method.specializers))
+end
+
+function call_generic_function(generic_function, args...)
+    applicable_methods = filter(method->isApplicable(method, args), generic_function.methods)
+    if length(applicable_methods) == 0
+        no_applicable_method(generic_function, args)
+    else 
+        specificity_sorted_methods_queue = sort_by_specificity(applicable_methods, args)
+        println(length(specificity_sorted_methods_queue))
+        println(["<$(class_name(class_of(method))) $(class_name(method.generic_function))($(join([string(class_name(specializer)) for specializer in method.specializers], ", ")))>" for method in specificity_sorted_methods_queue])
+        # TODO: Apply methods
+    end
+end
+
+function function_dispatch(object::Metaobject, args...)
+    if class_of(object) === MultiMethod
+        throw(error("ERROR: Unimplemented - calling directly throught the method."))
+    elseif class_of(object) !== GenericFunction
+        throw(error("ERROR: Instances of $(class_name(class_of(object))) are not callable."))
+    else call_generic_function(object, args...) end
+end
+
+(f::Metaobject)(args...) = function_dispatch(f, args...)
 
 function create_generic_function(name, lambdaList)
     if !isdefined(Main, name)
-        func_decl = Expr(:call, Expr(:(::), esc(name), :Metaobject), esc.(lambdaList)...)
-        procedure = Expr(:block, Expr(:call, :function_dispatch, esc(name), esc.(lambdaList)...))
-        func_def = Expr(:function, func_decl, procedure)
-
         quote
             global $(esc(name)) = $(esc(Metaobject))([
                 GenericFunction, # class_of
@@ -178,8 +213,6 @@ function create_generic_function(name, lambdaList)
                 $(esc(lambdaList)), # lambda-list
                 [], # methods
             ])
-
-            $(func_def)
         end
     end
 end
@@ -187,7 +220,7 @@ end
 macro defgeneric(expr)
     name = expr.args[1]
     lambdaList = expr.args[2:end]
-    create_generic_function(name, lambdaList)
+    return create_generic_function(name, lambdaList)
 end
 
 
@@ -202,9 +235,9 @@ macro defmethod(expr)
 
         push!($(esc(name))[4], Metaobject([
             MultiMethod, # class_of
-            $(esc(lambda_list)), # lambda_list
+            $((lambda_list...,)), # lambda_list
             $(esc(specializers)), # specializers
-            $(QuoteNode(procedure)), # procedure
+            (($(lambda_list...),) -> $procedure), # procedure
             [], # environment
             $(esc(name)) # generic_function
         ]))
@@ -227,25 +260,11 @@ function compute_cpl(instance)
     return cpl
 end
 
-function new(class ; kwargs...)
-    instance = []
-    append!(instance, [class])
-    slots = []
-    for slot in class[6]
-        println(slot)
-        sym = Symbol(slot)
-        if sym in keys(kwargs)
-            append!(slots, [kwargs[sym]])
-        else
-            append!(slots, [Nothing]) # non initialized slot            
-        end
-    end
-    append!(instance, slots)
-    return Metaobject(instance)
-    # instance = [
-    #    class,
-    #    slot1_val,
-    #    slot2_val,
-    #    ...
-    # ]
+function allocate_instance(class)
+    return Metaobject([
+            class,
+            [nothing for slot in class_direct_slots(class)]...
+    ])
 end
+
+new(class; initargs...) = allocate_instance(class)
