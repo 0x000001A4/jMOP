@@ -138,14 +138,18 @@ function Base.show(io::IO, ::MIME"text/plain", metaobject::Metaobject)
 end
 
 macro defclass(name, direct_superclasses, direct_slots)
+    sym_slots = []
+    for slot in eval(direct_slots)
+        append!(sym_slots, [Symbol(slot)])
+    end
     return quote
         global $(esc(name)) = $(esc(Metaobject))([
             Class, # class_of
             $(QuoteNode(name)), # name
             vcat($(esc(direct_superclasses)), [$(esc(Object))]), # direct_superclasses
-            $(esc(direct_slots)), # direct_slots
+            $(esc(sym_slots)), # direct_slots
             [$(esc(Class))], # cpl
-            $(esc(direct_slots)), # slots
+            $(esc(sym_slots)), # slots
             [], # direct_subclasses
             [], # direct_methods
         ])
@@ -216,7 +220,9 @@ function compute_cpl(instance)
         for _super in super.direct_superclasses 
             enqueue!(supersQueue, _super) 
         end
-        push!(cpl, super)
+        if !(super in cpl)
+            push!(cpl, super)
+        end
     end
     return cpl
 end
@@ -226,14 +232,16 @@ function new(class ; kwargs...)
     append!(instance, [class])
     slots = []
     for slot in class[6]
-        if slot in keys(kwargs)
-            append!(slots, [kwargs[slot]])
+        println(slot)
+        sym = Symbol(slot)
+        if sym in keys(kwargs)
+            append!(slots, [kwargs[sym]])
         else
             append!(slots, [Nothing]) # non initialized slot            
         end
     end
     append!(instance, slots)
-    return instance
+    return Metaobject(instance)
     # instance = [
     #    class,
     #    slot1_val,
