@@ -142,9 +142,9 @@ macro defclass(name, direct_superclasses, direct_slots)
             Class, # class_of
             $(QuoteNode(name)), # name
             vcat($(esc(direct_superclasses)), [$(esc(Object))]), # direct_superclasses
-            $(esc(direct_slots)), # direct_slots
+            $(map(x->:($x), direct_slots.args)), # direct_slots
             [$(esc(Class))], # cpl
-            $(esc(direct_slots)), # slots
+            $(map(x->:($x), direct_slots.args)), # slots
             [], # direct_subclasses
             [], # direct_methods
         ])
