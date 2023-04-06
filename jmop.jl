@@ -108,33 +108,7 @@ Object = Metaobject([
 ])
 
 Class[3] = [Object]
-function print_method(class, io)
-    print(io, "<$(class_name(class_of(class))) $(class_name(class.generic_function))($(join([string(class_name(specializer)) for specializer in class.specializers], ", ")))>")
-end
 
-function print_function(class, io)
-    print(io, "<$(class_name(class_of(class))) $(class_name(class)) with $(length(generic_methods(class))) $(length(generic_methods(class)) == 1 ? "method" : "methods")>")
-end
-
-function print_class(class, io)
-    print(io, "<$(class_name(class_of(class))) $(class_name(class))>")
-end
-
-function print_object(obj, io)
-    print(io, "<$(class_name(class_of(obj))) $(string(objectid(obj), base=62))>")
-end
-
-function Base.show(io::IO, ::MIME"text/plain", metaobject::Metaobject)
-    if class_of(metaobject) === Class
-        print_class(metaobject, io)
-    elseif class_of(metaobject) === Object
-        print_object(metaobject, io)
-    elseif class_of(metaobject) === GenericFunction
-        print_function(metaobject, io)
-    elseif class_of(metaobject) === MultiMethod
-        print_method(metaobject, io)
-    end
-end
 
 macro defclass(name, direct_superclasses, direct_slots)
     return quote
@@ -155,10 +129,11 @@ end
 @defclass(MultiMethod, [], [lambda_list, specializers, procedure, env, generic_function])
 
 
-function is_more_specific(method1, method2, args_cpl)
-    for i in 1:length(args_cpl)
-        index1 = findfirst(x -> x === method1.specializers[i], args_cpl[i])
-        index2 = findfirst(x -> x === method2.specializers[i], args_cpl[i])
+function is_more_specific(method1, method2, args)
+    println()
+    for i in 1:length(method1.specializers)
+        index1 = findfirst(x -> x === method1.specializers[i], compute_cpl(class_of(args[i])))
+        index2 = findfirst(x -> x === method2.specializers[i], compute_cpl(class_of(args[i])))
         
         if index1 < index2
             return true
@@ -170,12 +145,12 @@ function is_more_specific(method1, method2, args_cpl)
 end
 
 function sort_by_specificity(methods, args)
-    sort!(methods, lt = (x, y) -> is_more_specific(x, y, [compute_cpl(class_of(arg)) for arg in args]))
+    sort!(methods, lt = (x, y) -> is_more_specific(x, y, args))
     return methods
 end
 
 function no_applicable_method(generic_function, args)
-    throw(error("ERROR:  No applicable method for function $(class_name(generic_function)) with arguments $(join([string(class_name(class_of(arg))) for arg in args], ", "))"))
+    throw(error("ERROR:  No applicable method for function $(class_name(generic_function)) with arguments $(join([string((isMetaobject(arg) ? class_name(class_of(arg)) : arg)) for arg in args], ", "))"))
 end
 
 function isApplicable(method, args) 
@@ -188,7 +163,6 @@ function call_generic_function(generic_function, args...)
         no_applicable_method(generic_function, args)
     else 
         specificity_sorted_methods = sort_by_specificity(applicable_methods, args)
-        println(length(specificity_sorted_methods))
         println(["<$(class_name(class_of(method))) $(class_name(method.generic_function))($(join([string(class_name(specializer)) for specializer in method.specializers], ", ")))>" for method in specificity_sorted_methods])
         # TODO: Apply methods  - for now applies only the most specific (implement call_next_method)
         specificity_sorted_methods[1](args...)
@@ -227,8 +201,11 @@ end
 
 macro defmethod(expr)
     name = expr.args[1].args[1]
-    lambda_list = [_expr.args[1] for _expr in expr.args[1].args[2:end]]
-    specializers = [eval(_expr.args[2]) for _expr in expr.args[1].args[2:end]]
+    dump(expr)
+    lambda_list = [(isa(_expr, Expr) ? _expr.args[1] : _expr) for _expr in expr.args[1].args[2:end]]
+    println(lambda_list)
+    specializers = [eval(_expr.args[2]) for _expr in expr.args[1].args[2:end] if isa(_expr, Expr)]
+    println(specializers)
     procedure = expr.args[2]
 
     return quote
@@ -243,6 +220,24 @@ macro defmethod(expr)
             $(esc(name)) # generic_function
         ]))
     end
+end
+
+@defgeneric print_object(object, io)
+
+@defmethod print_object(object::MultiMethod, io) =
+    print(io, "<$(class_name(class_of(object))) $(class_name(object.generic_function))($(join([string(class_name(specializer)) for specializer in object.specializers], ", ")))>")
+
+@defmethod print_object(object::GenericFunction, io) =
+    print(io, "<$(class_name(class_of(object))) $(class_name(object)) with $(length(generic_methods(object))) $(length(generic_methods(object)) == 1 ? "method" : "methods")>")
+
+@defmethod print_object(object::Class, io) =
+    print(io, "<$(class_name(class_of(object))) $(class_name(object))>")
+
+@defmethod print_object(object::Object, io) =
+    print(io, "<$(class_name(class_of(object))) $(string(objectid(object), base=62))>")
+
+function Base.show(io::IO, ::MIME"text/plain", metaobject::Metaobject)
+    function_dispatch(print_object, metaobject, io)
 end
 
 function compute_cpl(instance)
