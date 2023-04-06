@@ -253,7 +253,9 @@ function compute_cpl(instance)
         for _super in super.direct_superclasses 
             enqueue!(supersQueue, _super) 
         end
-        push!(cpl, super)
+        if !(super in cpl)
+            push!(cpl, super)
+        end
     end
     return cpl
 end
