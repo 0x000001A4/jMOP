@@ -151,8 +151,8 @@ macro defclass(name, direct_superclasses, direct_slots)
     end
 end
 
-@defclass(GenericFunction, [], [:name, :lambda_list, :methods])
-@defclass(MultiMethod, [], [:lambda_list, :specializers, :procedure, :env, :generic_function])
+@defclass(GenericFunction, [], [name, lambda_list, methods])
+@defclass(MultiMethod, [], [lambda_list, specializers, procedure, env, generic_function])
 
 
 function is_more_specific(method1, method2, args_cpl)
@@ -187,16 +187,17 @@ function call_generic_function(generic_function, args...)
     if length(applicable_methods) == 0
         no_applicable_method(generic_function, args)
     else 
-        specificity_sorted_methods_queue = sort_by_specificity(applicable_methods, args)
-        println(length(specificity_sorted_methods_queue))
-        println(["<$(class_name(class_of(method))) $(class_name(method.generic_function))($(join([string(class_name(specializer)) for specializer in method.specializers], ", ")))>" for method in specificity_sorted_methods_queue])
-        # TODO: Apply methods
+        specificity_sorted_methods = sort_by_specificity(applicable_methods, args)
+        println(length(specificity_sorted_methods))
+        println(["<$(class_name(class_of(method))) $(class_name(method.generic_function))($(join([string(class_name(specializer)) for specializer in method.specializers], ", ")))>" for method in specificity_sorted_methods])
+        # TODO: Apply methods  - for now applies only the most specific (implement call_next_method)
+        specificity_sorted_methods[1](args...)
     end
 end
 
 function function_dispatch(object::Metaobject, args...)
     if class_of(object) === MultiMethod
-        throw(error("ERROR: Unimplemented - calling directly throught the method."))
+        object.procedure(args...)
     elseif class_of(object) !== GenericFunction
         throw(error("ERROR: Instances of $(class_name(class_of(object))) are not callable."))
     else call_generic_function(object, args...) end
