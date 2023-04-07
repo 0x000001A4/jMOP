@@ -203,6 +203,23 @@ function parseDirectSuperclasses(direct_superclasses)
     return supers
 end
 
+macro defclass(name, direct_superclasses, direct_slots, meta_class_expr)
+    parsedDirectSuperclasses = parseDirectSuperclasses(direct_superclasses)
+    parsedDirectSlots = parseDirectSlots(direct_slots)
+    return quote
+        global $(esc(name)) = $(esc(Metaobject))([
+            $(esc(meta_class_expr.args[2])), # class_of
+            $(QuoteNode(name)), # name
+            $(esc(parsedDirectSuperclasses)), # direct_superclasses
+            $(map(x->:($x), direct_slots.args)), # direct_slots
+            [$(esc(Class))], # cpl
+            $(esc(parsedDirectSlots)), # slots
+            [], # direct_subclasses
+            [], # direct_methods
+        ])
+    end
+end
+
 macro defclass(name, direct_superclasses, direct_slots)
     parsedDirectSuperclasses = parseDirectSuperclasses(direct_superclasses)
     parsedDirectSlots = parseDirectSlots(direct_slots)
