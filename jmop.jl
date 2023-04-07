@@ -316,7 +316,7 @@ end
 @defgeneric print_object(object, io)
 
 @defmethod print_object(object::Slot, io) =
-    print(io, "$(class_name(object))")
+    print(io, ":$(class_name(object))")
 
 @defmethod print_object(object::MultiMethod, io) =
     print(io, "<$(class_name(class_of(object))) $(class_name(object.generic_function))($(join([string(class_name(specializer)) for specializer in object.specializers], ", ")))>")
