@@ -295,11 +295,8 @@ end
 
 macro defmethod(expr)
     name = expr.args[1].args[1]
-    dump(expr)
     lambda_list = [(isa(_expr, Expr) ? _expr.args[1] : _expr) for _expr in expr.args[1].args[2:end]]
-    println(lambda_list)
     specializers = [eval(_expr.args[2]) for _expr in expr.args[1].args[2:end] if isa(_expr, Expr)]
-    println(specializers)
     procedure = expr.args[2]
 
     return quote
