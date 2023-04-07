@@ -6,12 +6,22 @@ mutable struct Metaobject
     value::Vector{Any}
 end
 
-mutable struct Slot
-    name
-    reader
-    writer
-    initform
-    initarg
+Slot = Metaobject([
+    nothing, # class_of
+    :Slot, # name
+    [], # direct_superclasses
+    [:name, :reader, :writer, :initform, :initarg], # direct_slots
+    [], # cpl
+    [:name, :reader, :writer, :initform, :initarg], # slots
+    [], # direct_subclasses
+    [] # direct_methods
+])
+
+function buildNamedSlot(name, class) 
+    return Metaobject([
+        class, # class_of
+        name, # name
+    ])
 end
 
 function Base.getindex(instance::Metaobject, index::Int64)
@@ -28,7 +38,7 @@ function Base.getproperty(instance::Metaobject, property::Symbol)
     if property == :value
         throw(ArgumentError("The value field should not be accessed directly."))
     else
-        instance[1+findall(slot -> slot == property, class_of(instance)[6])[1]]
+        instance[1+findall(slot -> (isa(slot, Symbol) ? slot : slot[2]) == property, class_of(instance)[6])[1]]
     end
 end
 
@@ -36,12 +46,19 @@ function Base.setproperty!(instance::Metaobject, property::Symbol, value::Any)
     if property == :value
         throw(ArgumentError("The value field should not be accessed directly."))
     else
-        instance[1+findall(slot -> slot == property, class_of(instance)[6])[1]] = value
+        instance[1+findall(slot -> (isa(slot, Symbol) ? slot : slot[2]) == property, class_of(instance)[6])[1]] = value
     end
 end
 
 function Base.length(instance::Metaobject)
     return length(getfield(instance, :value))
+end
+
+function Base.iterate(instance::Metaobject, state::Int64=1)
+    if state > length(instance)
+        return nothing
+    end
+    return (instance[state], state + 1)
 end
 
 class_name(instance::Metaobject) = instance.name
@@ -79,17 +96,25 @@ function ==(metaobject1::Metaobject, metaobject2::Metaobject)
     compareMetaobjects(metaobject1, metaobject2)
 end
 
+function allocate_instance(class)
+    return Metaobject([
+            class,
+            [nothing for slot in class_direct_slots(class)]...
+    ])
+end
 
-_Slot = Metaobject([
-    nothing,
-    :Slot,
-    [],
-    [:name, :reader, :writer, :initform, :initarg],
-    [],
-    [:name, :reader, :writer, :initform, :initarg],
-    [],
-    []
-])
+function initialize(instance, initargs)
+    for (index, value) in zip(keys(initargs), collect(values(initargs)))
+        println("$(instance), $(index):$(value)")
+        setproperty!(instance, index, value)
+    end
+end
+
+new(class; initargs...) = 
+    let instance = allocate_instance(class)
+        initialize(instance, initargs)
+        instance
+    end
 
 Class = Metaobject([
     nothing, # class_of
@@ -97,14 +122,24 @@ Class = Metaobject([
     [], # direct_superclasses
     [:name, :direct_superclasses, :direct_slots, :cpl, :slots, :direct_subclasses, :direct_methods], # direct_slots
     [], # cpl
-    [:name, :direct_superclasses, :direct_slots, :cpl, :slots, :direct_subclasses, :direct_methods], # slots
+    [], # slots
     [], # direct_subclasses
     [] # direct_methods
 ])
 
 Class[1] = Class
+Slot[1] = Class
 Class[5] = [Class]
 
+Class[6] = [buildNamedSlot(_name, Slot) for _name in [:name, :direct_superclasses, :direct_slots, :cpl, :slots, :direct_subclasses, :direct_methods]]
+
+
+function compute_slots(object)
+    for ds in class_direct_slots(class_of(object))
+        println(ds)
+    end
+end
+    
 Top = Metaobject([
     Class,
     :Top, 
@@ -131,10 +166,10 @@ Class[3] = [Object]
 
 
 function parseDirectSlots(direct_slots)
-    directSlots = Vector{Slot}()
+    directSlots = Vector{Metaobject}()
     for i in 1:length(direct_slots.args)
         # Start by pushing a new slot to the directSlots and filling the slot as we find the information
-        push!(directSlots, Slot([nothing for j in 1:5]...))
+        push!(directSlots, allocate_instance(Slot))
         slot = direct_slots.args[i]
 
         # Normal scenario in which no options are given
@@ -162,16 +197,23 @@ function parseDirectSlots(direct_slots)
     return directSlots
 end
 
+function parseDirectSuperclasses(direct_superclasses)
+    supers = direct_superclasses.args
+    if !(Class in supers) push!(supers, Object) end
+    return supers
+end
+
 macro defclass(name, direct_superclasses, direct_slots)
+    parsedDirectSuperclasses = parseDirectSuperclasses(direct_superclasses)
     parsedDirectSlots = parseDirectSlots(direct_slots)
     return quote
         global $(esc(name)) = $(esc(Metaobject))([
             Class, # class_of
             $(QuoteNode(name)), # name
-            vcat($(esc(direct_superclasses)), [$(esc(Object))]), # direct_superclasses
+            $(esc(parsedDirectSuperclasses)), # direct_superclasses
             $(map(x->:($x), direct_slots.args)), # direct_slots
             [$(esc(Class))], # cpl
-            $(map(x->:($x), direct_slots.args)), # slots
+            $(esc(parsedDirectSlots)), # slots
             [], # direct_subclasses
             [], # direct_methods
         ])
@@ -215,7 +257,7 @@ function call_generic_function(generic_function, args...)
         no_applicable_method(generic_function, args)
     else 
         specificity_sorted_methods = sort_by_specificity(applicable_methods, args)
-        println(["<$(class_name(class_of(method))) $(class_name(method.generic_function))($(join([string(class_name(specializer)) for specializer in method.specializers], ", ")))>" for method in specificity_sorted_methods])
+        #println(["<$(class_name(class_of(method))) $(class_name(method.generic_function))($(join([string(class_name(specializer)) for specializer in method.specializers], ", ")))>" for method in specificity_sorted_methods])
         # TODO: Apply methods  - for now applies only the most specific (implement call_next_method)
         specificity_sorted_methods[1](args...)
     end
@@ -276,6 +318,9 @@ end
 
 @defgeneric print_object(object, io)
 
+@defmethod print_object(object::Slot, io) =
+    print(io, "$(class_name(object))")
+
 @defmethod print_object(object::MultiMethod, io) =
     print(io, "<$(class_name(class_of(object))) $(class_name(object.generic_function))($(join([string(class_name(specializer)) for specializer in object.specializers], ", ")))>")
 
@@ -290,10 +335,6 @@ end
 
 function Base.show(io::IO, ::MIME"text/plain", metaobject::Metaobject)
     function_dispatch(print_object, metaobject, io)
-end
-
-function Base.show(io::IO, slot::Slot)
-    show(slot.name)
 end
 
 function compute_cpl(instance)
@@ -311,22 +352,3 @@ function compute_cpl(instance)
     end
     return cpl
 end
-
-function allocate_instance(class)
-    return Metaobject([
-            class,
-            [nothing for slot in class_direct_slots(class)]...
-    ])
-end
-
-function initialize(instance, initargs)
-    for (index, value) in zip(keys(initargs), collect(values(initargs)))
-        setproperty!(instance, index, value)
-    end
-end
-
-new(class; initargs...) = 
-    let instance = allocate_instance(class)
-        initialize(instance, initargs)
-        instance
-    end
