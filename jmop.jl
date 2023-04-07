@@ -2,8 +2,16 @@ import Base: ==
 import Base.show
 using DataStructures
 
-struct Metaobject
+mutable struct Metaobject
     value::Vector{Any}
+end
+
+mutable struct Slot
+    name
+    reader
+    writer
+    initform
+    initarg
 end
 
 function Base.getindex(instance::Metaobject, index::Int64)
@@ -28,7 +36,7 @@ function Base.setproperty!(instance::Metaobject, property::Symbol, value::Any)
     if property == :value
         throw(ArgumentError("The value field should not be accessed directly."))
     else
-        instance[1+findall(slot -> slot == property, class_of(instance))[1]] = value
+        instance[1+findall(slot -> slot == property, class_of(instance)[6])[1]] = value
     end
 end
 
@@ -71,6 +79,18 @@ function ==(metaobject1::Metaobject, metaobject2::Metaobject)
     compareMetaobjects(metaobject1, metaobject2)
 end
 
+
+_Slot = Metaobject([
+    nothing,
+    :Slot,
+    [],
+    [:name, :reader, :writer, :initform, :initarg],
+    [],
+    [:name, :reader, :writer, :initform, :initarg],
+    [],
+    []
+])
+
 Class = Metaobject([
     nothing, # class_of
     :Class, # name
@@ -110,7 +130,40 @@ Object = Metaobject([
 Class[3] = [Object]
 
 
+function parseDirectSlots(direct_slots)
+    directSlots = Vector{Slot}()
+    for i in 1:length(direct_slots.args)
+        # Start by pushing a new slot to the directSlots and filling the slot as we find the information
+        push!(directSlots, Slot([nothing for j in 1:5]...))
+        slot = direct_slots.args[i]
+
+        # Normal scenario in which no options are given
+        if isa(slot, Symbol) directSlots[i].name = slot
+
+        # In case slot options are provided
+        elseif isa(slot, Expr)
+            # In case name=initarg in one of the slot definitions
+            if slot.head == :(=) && length(slot.args == 2)
+                directSlots[i].name = slot.args[1]
+                directSlots[i].initarg = slot.args[2]
+
+            # In case options are provided [name, reader, writer, initform=initarg] or [name=initarg, reader, writer]
+            elseif slot.head == :vect && length(slot.args) > 0 && length(slot.args) <= 4
+                for slotDef in slot.args
+                    if isa(slotDef, Expr) && slotDef.head == :(=) && length(slotDef.args) == 2
+                        if slotDef.args[1] in [:reader, :writer, :initform]
+                            setproperty!(directSlots[i], slotDef.args[1], slotDef.args[2])
+                        else directSlots[i].initarg = slotDef.args[2] end
+                    else directSlots[i].name = slotDef end
+                end
+            end
+        end
+    end
+    return directSlots
+end
+
 macro defclass(name, direct_superclasses, direct_slots)
+    parsedDirectSlots = parseDirectSlots(direct_slots)
     return quote
         global $(esc(name)) = $(esc(Metaobject))([
             Class, # class_of
@@ -130,7 +183,6 @@ end
 
 
 function is_more_specific(method1, method2, args)
-    println()
     for i in 1:length(method1.specializers)
         index1 = findfirst(x -> x === method1.specializers[i], compute_cpl(class_of(args[i])))
         index2 = findfirst(x -> x === method2.specializers[i], compute_cpl(class_of(args[i])))
@@ -240,6 +292,10 @@ function Base.show(io::IO, ::MIME"text/plain", metaobject::Metaobject)
     function_dispatch(print_object, metaobject, io)
 end
 
+function Base.show(io::IO, slot::Slot)
+    show(slot.name)
+end
+
 function compute_cpl(instance)
     cpl = []
     supersQueue = Queue{Any}()
@@ -263,4 +319,14 @@ function allocate_instance(class)
     ])
 end
 
-new(class; initargs...) = allocate_instance(class)
+function initialize(instance, initargs)
+    for (index, value) in zip(keys(initargs), collect(values(initargs)))
+        setproperty!(instance, index, value)
+    end
+end
+
+new(class; initargs...) = 
+    let instance = allocate_instance(class)
+        initialize(instance, initargs)
+        instance
+    end
