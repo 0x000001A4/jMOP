@@ -99,7 +99,7 @@ end
 function allocate_instance(class)
     return Metaobject([
             class,
-            [nothing for slot in class_direct_slots(class)]...
+            [missing for slot in class_direct_slots(class)]...
     ])
 end
 
@@ -197,9 +197,11 @@ function parseDirectSlots(direct_slots)
     return directSlots
 end
 
-function parseDirectSuperclasses(direct_superclasses)
+function parseDirectSuperclasses(direct_superclasses, metaclass)
     supers = direct_superclasses.args
-    if !(Class in supers) push!(supers, Object) end
+    if !(Class in supers) && metaclass != nothing 
+        push!(supers, Object)
+    end
     return supers
 end
 
@@ -260,21 +262,31 @@ end
 
 function defineClassOptionsMethods(parsedDirectSlots, spec)
     for slot in parsedDirectSlots
-        if (slot.reader) != nothing
+        if !ismissing(slot.reader)
             eval(create_method(compute_slot_reader_expr(slot.reader, spec).args[2]))
         end
-        if (slot.writer) != nothing 
+        if !ismissing(slot.writer) 
             eval(create_method(compute_slot_writer_expr(slot.writer, spec).args[2]))
         end
     end
 end
 
-macro defclass(name, direct_superclasses, direct_slots)
-    parsedDirectSuperclasses = parseDirectSuperclasses(direct_superclasses)
+function parseKwargs(kwargs)
+    for expr in kwargs
+        if expr.args[1] == :metaclass
+            return expr.args[2]
+        end
+    end
+    return nothing
+end
+
+macro defclass(name, direct_superclasses, direct_slots, kwargs...)
+    metaclass = parseKwargs(kwargs)
+    parsedDirectSuperclasses = parseDirectSuperclasses(direct_superclasses, metaclass)
     parsedDirectSlots = parseDirectSlots(direct_slots)
     return quote
-        global $(esc(name)) = $(esc(Metaobject))([
-            Class, # class_of
+        global $(esc(name)) = Metaobject([
+            $(metaclass == nothing ? Class : eval(metaclass)), # class_of
             $(QuoteNode(name)), # name
             $(esc(parsedDirectSuperclasses)), # direct_superclasses
             $(map(x->:($x), direct_slots.args)), # direct_slots
