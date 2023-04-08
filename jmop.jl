@@ -10,9 +10,9 @@ Slot = Metaobject([
     nothing, # class_of
     :Slot, # name
     [], # direct_superclasses
-    [:name, :reader, :writer, :initform, :initarg], # direct_slots
+    [:name, :reader, :writer, :initform, :value], # direct_slots
     [], # cpl
-    [:name, :reader, :writer, :initform, :initarg], # slots
+    [:name, :reader, :writer, :initform, :value], # slots
     [], # direct_subclasses
     [] # direct_methods
 ])
@@ -180,7 +180,7 @@ function parseDirectSlots(direct_slots)
             # In case name=initarg in one of the slot definitions
             if slot.head == :(=) && length(slot.args == 2)
                 directSlots[i].name = slot.args[1]
-                directSlots[i].initarg = slot.args[2]
+                directSlots[i].value = slot.args[2]
 
             # In case options are provided [name, reader, writer, initform=initarg] or [name=initarg, reader, writer]
             elseif slot.head == :vect && length(slot.args) > 0 && length(slot.args) <= 4
@@ -188,7 +188,7 @@ function parseDirectSlots(direct_slots)
                     if isa(slotDef, Expr) && slotDef.head == :(=) && length(slotDef.args) == 2
                         if slotDef.args[1] in [:reader, :writer, :initform]
                             setproperty!(directSlots[i], slotDef.args[1], slotDef.args[2])
-                        else directSlots[i].initarg = slotDef.args[2] end
+                        else directSlots[i].value = slotDef.args[2] end
                     else directSlots[i].name = slotDef end
                 end
             end
@@ -201,6 +201,72 @@ function parseDirectSuperclasses(direct_superclasses)
     supers = direct_superclasses.args
     if !(Class in supers) push!(supers, Object) end
     return supers
+end
+
+function compute_slot_reader_expr(method, spec)
+    splitStr = split(string(method), "_")
+    return quote 
+        $(method)(o::$(class_name(spec))) = o.$(Symbol(splitStr[length(splitStr)]))
+    end
+end
+
+function compute_slot_writer_expr(method, spec)
+    splitStr = split(string(method), "_")
+    return quote 
+        $(method)(o::$(class_name(spec)), v) = o.$(Symbol(chop(splitStr[length(splitStr)], head=0, tail=1))) = v
+    end
+end
+
+function create_generic_function(name, lambdaList)
+    if !isdefined(Main, name)
+        return quote
+            global $(name) = Metaobject([
+                $(:GenericFunction), # class_of
+                $(QuoteNode(name)), # name
+                $(lambdaList), # lambda-list
+                [], # methods
+            ])
+        end
+    end    
+end
+
+macro defgeneric(expr)
+    name = expr.args[1]
+    lambdaList = expr.args[2:end]
+    create_generic_function(name, lambdaList)
+end
+
+function create_method(expr)
+    name = expr.args[1].args[1]
+    lambda_list = [(isa(_expr, Expr) ? _expr.args[1] : _expr) for _expr in expr.args[1].args[2:end]]
+    specializers = [eval(_expr.args[2]) for _expr in expr.args[1].args[2:end] if isa(_expr, Expr)]
+    procedure = expr.args[2]
+    return quote
+        $(create_generic_function(name, lambda_list))
+        push!($(name)[4], Metaobject([
+            $(:MultiMethod), # class_of
+            $((lambda_list...,)), # lambda_list
+            $(specializers), # specializers
+            (($(lambda_list...),) -> $procedure), # procedure
+            [], # environment
+            $(name) # generic_function
+        ]))
+    end
+end
+
+macro defmethod(expr)
+    create_method(expr)
+end
+
+function defineClassOptionsMethods(parsedDirectSlots, spec)
+    for slot in parsedDirectSlots
+        if (slot.reader) != nothing
+            eval(create_method(compute_slot_reader_expr(slot.reader, spec).args[2]))
+        end
+        if (slot.writer) != nothing 
+            eval(create_method(compute_slot_writer_expr(slot.writer, spec).args[2]))
+        end
+    end
 end
 
 macro defclass(name, direct_superclasses, direct_slots)
@@ -217,6 +283,7 @@ macro defclass(name, direct_superclasses, direct_slots)
             [], # direct_subclasses
             [], # direct_methods
         ])
+        defineClassOptionsMethods($parsedDirectSlots, $name)
     end
 end
 
@@ -272,46 +339,6 @@ function function_dispatch(object::Metaobject, args...)
 end
 
 (f::Metaobject)(args...) = function_dispatch(f, args...)
-
-function create_generic_function(name, lambdaList)
-    if !isdefined(Main, name)
-        quote
-            global $(esc(name)) = $(esc(Metaobject))([
-                GenericFunction, # class_of
-                $(QuoteNode(name)), # name
-                $(esc(lambdaList)), # lambda-list
-                [], # methods
-            ])
-        end
-    end
-end
-
-macro defgeneric(expr)
-    name = expr.args[1]
-    lambdaList = expr.args[2:end]
-    return create_generic_function(name, lambdaList)
-end
-
-
-macro defmethod(expr)
-    name = expr.args[1].args[1]
-    lambda_list = [(isa(_expr, Expr) ? _expr.args[1] : _expr) for _expr in expr.args[1].args[2:end]]
-    specializers = [eval(_expr.args[2]) for _expr in expr.args[1].args[2:end] if isa(_expr, Expr)]
-    procedure = expr.args[2]
-
-    return quote
-        $(create_generic_function(name, lambda_list))
-
-        push!($(esc(name))[4], Metaobject([
-            MultiMethod, # class_of
-            $((lambda_list...,)), # lambda_list
-            $(esc(specializers)), # specializers
-            (($(lambda_list...),) -> $procedure), # procedure
-            [], # environment
-            $(esc(name)) # generic_function
-        ]))
-    end
-end
 
 @defgeneric print_object(object, io)
 
