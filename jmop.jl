@@ -199,10 +199,10 @@ end
 
 function parseDirectSuperclasses(direct_superclasses, metaclass)
     supers = direct_superclasses.args
-    if !(Class in supers) && metaclass != nothing 
+    if !(:Class in supers)
         push!(supers, Object)
     end
-    return supers
+    return [eval(super) for super in supers]
 end
 
 function compute_slot_reader_expr(method, spec)
@@ -302,6 +302,16 @@ end
 @defclass(GenericFunction, [], [name, lambda_list, methods])
 @defclass(MultiMethod, [], [lambda_list, specializers, procedure, env, generic_function])
 
+@defclass(BuiltInClass, [Class], [])
+@defclass(_String, [String], [], metaclass=BuiltInClass)
+@defclass(_Bool, [Bool], [], metaclass=BuiltInClass)
+@defclass(_Float32, [Float32], [], metaclass=BuiltInClass)
+@defclass(_Float64, [Float64], [], metaclass=BuiltInClass)
+@defclass(_BigFloat, [BigFloat], [], metaclass=BuiltInClass)
+@defclass(_Int64, [Int64], [], metaclass=BuiltInClass)
+@defclass(_Int128, [Int128], [], metaclass=BuiltInClass)
+@defclass(_BigInt, [BigInt], [], metaclass=BuiltInClass)
+
 
 function is_more_specific(method1, method2, args)
     for i in 1:length(method1.specializers)
@@ -327,7 +337,7 @@ function no_applicable_method(generic_function, args)
 end
 
 function isApplicable(method, args) 
-    return all(spec in compute_cpl(class_of(arg)) for (arg,spec) in zip(args, method.specializers))
+    return all(spec in compute_cpl((isprimitivetype(typeof(arg)) ? eval(quote $(Symbol("_", typeof(1))) end) : class_of(arg))) for (arg,spec) in zip(args, method.specializers))
 end
 
 function call_generic_function(generic_function, args...)
@@ -379,12 +389,14 @@ function compute_cpl(instance)
     enqueue!(supersQueue, instance)
     while !isempty(supersQueue)
         super = dequeue!(supersQueue)
-        for _super in super.direct_superclasses 
+        for _super in super.direct_superclasses
             enqueue!(supersQueue, _super) 
         end
-        if !(super in cpl)
+        if !(super in cpl) && !(super in [Object, Top])
             push!(cpl, super)
         end
     end
+    push!(cpl, Object)
+    push!(cpl, Top)
     return cpl
 end
