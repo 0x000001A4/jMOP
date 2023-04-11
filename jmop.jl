@@ -278,7 +278,7 @@ map(object -> object.cpl = compute_cpl(object), [Top, Object, Slot, Class, Gener
 map(object -> object.slots = compute_slots(object), [Top, Object, Slot, Class, GenericFunction, MultiMethod])
 
 
-
+#=
 function compute_inherited_slots(object, direct_superclasses, slots=[])
     if length(direct_superclasses) == 0
         return slots
@@ -287,7 +287,7 @@ function compute_inherited_slots(object, direct_superclasses, slots=[])
     if isMetaobject(superclass) append!(slots, class_slots(superclass)) end
     compute_inherited_slots(object, direct_superclasses, slots)
 end
-
+=#
 
 function parseDirectSlots(direct_slots, metaclass)
     directSlots = Vector{Metaobject}()
@@ -353,7 +353,7 @@ function create_generic_function(name, lambdaList)
                 $(:GenericFunction), # class_of
                 $(QuoteNode(name)), # name
                 $(lambdaList), # lambda-list
-                [] # methods
+                [], # methods
             ])
         end
     end    
@@ -376,7 +376,7 @@ function create_method(expr)
             $(:MultiMethod), # class_of
             $((lambda_list...,)), # lambda_list
             $(specializers), # specializers
-            (($(lambda_list...),) -> $procedure), # procedure
+            (($(vcat(lambda_list, [:call_next_method, :i])...),) -> $procedure), # procedure
             [], # environment
             $(name) # generic_function
         ]))
@@ -468,27 +468,31 @@ function isApplicable(method, args)
     return all(spec in class_cpl(class_of(arg)) for (arg,spec) in zip(args, method.specializers))
 end
 
-function call_generic_function(generic_function, args...)
-    applicable_methods = filter(method->isApplicable(method, args), generic_function.methods)
-    if length(applicable_methods) == 0
-        no_applicable_method(generic_function, args)
-    else 
-        specificity_sorted_methods = sort_by_specificity(applicable_methods, args)
-        #println(["<$(class_name(class_of(method))) $(class_name(method.generic_function))($(join([string(class_name(specializer)) for specializer in method.specializers], ", ")))>" for method in specificity_sorted_methods])
-        # TODO: Apply methods  - for now applies only the most specific (implement call_next_method)
-        specificity_sorted_methods[1](args...)
+function call_method(method, args...)
+    method.procedure(args...)
+end
+
+
+function call_generic_function(generic_function::Metaobject, args...)
+    if class_of(generic_function) !== GenericFunction
+        throw(error("ERROR: Instances of $(class_name(class_of(generic_function))) are not callable."))
+    else
+        # Find applicable methods
+        applicable_methods = filter(method->isApplicable(method, args), generic_function.methods)
+        if length(applicable_methods) == 0 
+            no_applicable_method(generic_function, args)
+        else
+            specializedMethods = sort_by_specificity(applicable_methods, args)
+            i = 2
+            function call_next_method()
+                call_method(specializedMethods[i], args..., call_next_method, i+1)
+            end
+            call_method(specializedMethods[1], args..., call_next_method, 2)
+        end
     end
 end
 
-function function_dispatch(object::Metaobject, args...)
-    if class_of(object) === MultiMethod
-        object.procedure(args...)
-    elseif class_of(object) !== GenericFunction
-        throw(error("ERROR: Instances of $(class_name(class_of(object))) are not callable."))
-    else call_generic_function(object, args...) end
-end
-
-(f::Metaobject)(args...) = function_dispatch(f, args...)
+(f::Metaobject)(args...) = call_generic_function(f, args...)
 
 @defgeneric print_object(object, io)
 
@@ -508,7 +512,7 @@ end
     print(io, "<$(class_name(class_of(object))) $(string(objectid(object), base=62))>")
 
 function Base.show(io::IO, ::MIME"text/plain", metaobject::Metaobject)
-    function_dispatch(print_object, metaobject, io)
+    call_generic_function(print_object, metaobject, io)
 end
 
 
