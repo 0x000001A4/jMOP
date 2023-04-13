@@ -74,7 +74,7 @@ To check what class is this instance an instance of (on this particular object s
 =#
 
 isMetaobject(object) = isa(object, Metaobject)
-class_of(instance) = isMetaobject(instance) ? instance[1] : eval(quote $(Symbol("_", typeof(instance))) end)
+class_of(instance) = typeof(instance) === Metaobject ? instance[1] : eval(quote $(Symbol("_", typeof(instance))) end)
 
 
 #=#################################################################################################
@@ -161,15 +161,15 @@ Slot = Metaobject([
     nothing, # class_of
     :Slot, # name
     [Object], # direct_superclasses
-    [:class, :name, :reader, :writer, :initform, :slotValue], # direct_slots
+    [:name, :reader, :writer, :initform, :slotValue], # direct_slots
     [], # cpl
     [], # slots
     [], # direct_subclasses
     [] # direct_methods
 ])
 
-buildNamedSlot(class, name) = Metaobject([Slot, class, name, missing, missing, missing, missing])
-Slot[6] = [buildNamedSlot(Slot, name) for name in [:class, :name, :reader, :writer, :initform, :slotValue]]
+buildNamedSlot(class, name) = Metaobject([Slot, name, missing, missing, missing, missing])
+Slot[6] = [buildNamedSlot(Slot, name) for name in [:name, :reader, :writer, :initform, :slotValue]]
 
 
 ####################
@@ -256,12 +256,12 @@ method_specializers(method::Metaobject) = method.specializers
 function compute_cpl(instance)
     ObjectInSupers = false
     cpl = []
-    supersQueue = Queue{Any}()
+    supersQueue = Queue{Metaobject}()
     enqueue!(supersQueue, instance)
     while !isempty(supersQueue)
         super = dequeue!(supersQueue)
         for _super in super.direct_superclasses
-            enqueue!(supersQueue, _super) 
+            if isMetaobject(_super) enqueue!(supersQueue, _super) end
         end
         if !(super in cpl)
             if super === Object ObjectInSupers = true
@@ -278,16 +278,7 @@ map(object -> object.cpl = compute_cpl(object), [Top, Object, Slot, Class, Gener
 map(object -> object.slots = compute_slots(object), [Top, Object, Slot, Class, GenericFunction, MultiMethod])
 
 
-#=
-function compute_inherited_slots(object, direct_superclasses, slots=[])
-    if length(direct_superclasses) == 0
-        return slots
-    end
-    superclass = popfirst!(direct_superclasses)
-    if isMetaobject(superclass) append!(slots, class_slots(superclass)) end
-    compute_inherited_slots(object, direct_superclasses, slots)
-end
-=#
+
 
 function parseDirectSlots(direct_slots, metaclass)
     directSlots = Vector{Metaobject}()
@@ -325,32 +316,26 @@ function parseDirectSlots(direct_slots, metaclass)
     return directSlots
 end
 
-function parseDirectSuperclasses(direct_superclasses)
-    supers = direct_superclasses.args
-    if all(super -> isMetaobject(eval(super)), supers) supers = vcat(supers, [:Object])
-    else supers = vcat(supers, [:Top]) end
-    return supers
-end
 
 function compute_slot_reader_expr(method, spec)
     splitStr = split(string(method), "_")
-    return quote 
-        $(method)(o::$(class_name(spec))) = o.$(Symbol(splitStr[length(splitStr)]))
+    quote 
+        $(method)(o::$(spec)) = o.$(Symbol(splitStr[length(splitStr)]))
     end
 end
 
 function compute_slot_writer_expr(method, spec)
     splitStr = split(string(method), "_")
-    return quote 
-        $(method)(o::$(class_name(spec)), v) = o.$(Symbol(chop(splitStr[length(splitStr)], head=0, tail=1))) = v
+    quote 
+        $(method)(o::$(spec), v) = o.$(Symbol(chop(splitStr[length(splitStr)], head=0, tail=1))) = v
     end
 end
 
 function create_generic_function(name, lambdaList)
     if !isdefined(Main, name)
-        return quote
+        quote
             global $(name) = Metaobject([
-                $(:GenericFunction), # class_of
+                GenericFunction, # class_of
                 $(QuoteNode(name)), # name
                 $(lambdaList), # lambda-list
                 [], # methods
@@ -368,14 +353,14 @@ end
 function create_method(expr)
     name = expr.args[1].args[1]
     lambda_list = [(isa(_expr, Expr) ? _expr.args[1] : _expr) for _expr in expr.args[1].args[2:end]]
-    specializers = [eval(_expr.args[2]) for _expr in expr.args[1].args[2:end] if isa(_expr, Expr)]
+    specializers = [_expr.args[2] for _expr in expr.args[1].args[2:end] if isa(_expr, Expr)]
     procedure = expr.args[2]
-    return quote
+    quote
         $(create_generic_function(name, lambda_list))
         push!($(name)[4], Metaobject([
-            $(:MultiMethod), # class_of
+            MultiMethod, # class_of
             $((lambda_list...,)), # lambda_list
-            $(specializers), # specializers
+            [$(specializers...)], # specializers
             (($(vcat(lambda_list, [:call_next_method, :i])...),) -> $procedure), # procedure
             [], # environment
             $(name) # generic_function
@@ -388,12 +373,14 @@ macro defmethod(expr)
 end
 
 function defineClassOptionsMethods(parsedDirectSlots, spec)
-    for slot in parsedDirectSlots
-        if !ismissing(slot.reader)
-            eval(create_method(compute_slot_reader_expr(slot.reader, spec).args[2]))
-        end
-        if !ismissing(slot.writer) 
-            eval(create_method(compute_slot_writer_expr(slot.writer, spec).args[2]))
+    quote
+        for slot in $(parsedDirectSlots)
+            if !ismissing(slot.reader)
+                create_method(compute_slot_reader_expr(slot.reader, $(spec)).args[2])
+            end
+            if !ismissing(slot.writer) 
+                create_method(compute_slot_writer_expr(slot.writer, $(spec)).args[2])
+            end
         end
     end
 end
@@ -407,24 +394,42 @@ function parseKwargs(kwargs)
     return nothing
 end
 
+function parseDirectSuperclasses(direct_superclasses)
+    quote
+        all(super -> isMetaobject(super), $(direct_superclasses.args)) ? 
+            [vcat($(direct_superclasses), [Object])...] :
+            [vcat($(direct_superclasses), [Top])...]
+    end
+end
+
+compute_class_cpl(instance) = quote
+    $(instance).cpl = compute_cpl($instance)
+end
+
+compute_class_slots(instance) = quote
+    $(instance).slots = compute_slots($instance)
+end
+
 macro defclass(name, direct_superclasses, direct_slots, kwargs...)
     metaclass = parseKwargs(kwargs)
-    parsedDirectSuperclasses = parseDirectSuperclasses(direct_superclasses)
     parsedDirectSlots = parseDirectSlots(direct_slots, metaclass)
-    return quote
+    quote
         global $(esc(name)) = Metaobject([
-            $(metaclass == nothing ? Class : eval(metaclass)), # class_of
+            $(metaclass == nothing ? Class : metaclass), # class_of
             $(QuoteNode(name)), # name
-            $(map(x->eval(x), parsedDirectSuperclasses)), # direct_superclasses
-            $(map(x->:($x), direct_slots.args)), # direct_slots
+            $(parseDirectSuperclasses(direct_superclasses)), # direct_superclasses
+            $(parsedDirectSlots), # direct_slots
             [], # cpl
             [], # slots
             [], # direct_subclasses
             [], # direct_methods
         ])
+        # Compute cpl
+        $(compute_class_cpl(name))
         # Fill the class with its direct_slots
-        defineClassOptionsMethods($parsedDirectSlots, $name)
-        # Call the class's initializer# TODO
+        $(defineClassOptionsMethods(parsedDirectSlots, name))
+        # Call the class's initializer
+        $(compute_class_slots(name))
     end
 end
 
@@ -531,9 +536,7 @@ end
 end
 
 @defmethod initialize(instance::Class, initargs) = begin
-    for (index, value) in zip(keys(initargs), collect(values(initargs)))
-        setproperty!(instance, index, value)
-    end
+    compute_slots(instance)
 end
 
 
