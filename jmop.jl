@@ -74,7 +74,7 @@ To check what class is this instance an instance of (on this particular object s
 =#
 
 isMetaobject(object) = isa(object, Metaobject)
-class_of(instance) = typeof(instance) === Metaobject ? instance[1] : eval(quote $(Symbol("_", typeof(instance))) end)
+class_of(instance::Metaobject) = instance[1]
 
 
 #=#################################################################################################
@@ -272,7 +272,7 @@ function compute_cpl(instance)
     return cpl
 end
 
-compute_slots(instance) = vcat(map(class -> [buildNamedSlot(class, slotName) for slotName in class_direct_slots(class)], class_cpl(instance))...)
+compute_slots(instance::Metaobject) = vcat(map(class -> [buildNamedSlot(class, slotName) for slotName in class_direct_slots(class)], class_cpl(instance))...)
 
 map(object -> object.cpl = compute_cpl(object), [Top, Object, Slot, Class, GenericFunction, MultiMethod])
 map(object -> object.slots = compute_slots(object), [Top, Object, Slot, Class, GenericFunction, MultiMethod])
@@ -410,41 +410,25 @@ compute_class_slots(instance) = quote
     $(instance).slots = compute_slots($instance)
 end
 
-macro defclass(name, direct_superclasses, direct_slots, kwargs...)
-    metaclass = parseKwargs(kwargs)
-    parsedDirectSlots = parseDirectSlots(direct_slots, metaclass)
-    quote
-        global $(esc(name)) = Metaobject([
-            $(metaclass == nothing ? Class : metaclass), # class_of
-            $(QuoteNode(name)), # name
-            $(parseDirectSuperclasses(direct_superclasses)), # direct_superclasses
-            $(parsedDirectSlots), # direct_slots
-            [], # cpl
-            [], # slots
-            [], # direct_subclasses
-            [], # direct_methods
-        ])
-        # Compute cpl
-        $(compute_class_cpl(name))
-        # Fill the class with its direct_slots
-        $(defineClassOptionsMethods(parsedDirectSlots, name))
-        # Call the class's initializer
-        $(compute_class_slots(name))
+@defmethod allocate_instance(class::Class) = 
+    Metaobject([
+        class,
+        [buildNamedSlot(class, slot) for slot in class_direct_slots(class)]...
+])
+
+@defmethod initialize(instance::Object, initargs) = begin
+    for (index, value) in zip(keys(initargs), collect(values(initargs)))
+        setproperty!(instance, index, value)
     end
 end
 
+new(class; initargs...) = 
+    let instance = allocate_instance(class)
+        initialize(instance, initargs)
+        instance
+    end
 
-@defclass(BuiltInClass, [Class], [])
-@defclass(_String, [String], [], metaclass=BuiltInClass)
-@defclass(_Bool, [Bool], [], metaclass=BuiltInClass)
-@defclass(_Float32, [Float32], [], metaclass=BuiltInClass)
-@defclass(_Float64, [Float64], [], metaclass=BuiltInClass)
-@defclass(_BigFloat, [BigFloat], [], metaclass=BuiltInClass)
-@defclass(_Int64, [Int64], [], metaclass=BuiltInClass)
-@defclass(_Int128, [Int128], [], metaclass=BuiltInClass)
-@defclass(_BigInt, [BigInt], [], metaclass=BuiltInClass)
-
-
+    
 function is_more_specific(method1, method2, args)
     for i in 1:length(method1.specializers)
         index1 = findfirst(x -> x === method1.specializers[i], class_cpl(class_of(args[i])))
@@ -522,26 +506,36 @@ end
 
 
 
-
-@defmethod allocate_instance(class::Class) = 
-    Metaobject([
-        class,
-        [missing for slot in class_direct_slots(class)]...
-])
-
-@defmethod initialize(instance::Object, initargs) = begin
-    for (index, value) in zip(keys(initargs), collect(values(initargs)))
-        setproperty!(instance, index, value)
+macro defclass(name, direct_superclasses, direct_slots, kwargs...)
+    metaclass = parseKwargs(kwargs)
+    parsedDirectSlots = parseDirectSlots(direct_slots, metaclass)
+    quote
+        global $(esc(name)) = Metaobject([
+            $(metaclass == nothing ? Class : metaclass), # class_of
+            $(QuoteNode(name)), # name
+            $(parseDirectSuperclasses(direct_superclasses)), # direct_superclasses
+            $(map(slot -> slot.name, parsedDirectSlots)), # direct_slots
+            [], # cpl
+            [], # slots
+            [], # direct_subclasses
+            [], # direct_methods
+        ])
+        $(compute_class_cpl(name))
+        $(defineClassOptionsMethods(parsedDirectSlots, name))
+        $(compute_class_slots(name))
     end
 end
 
-@defmethod initialize(instance::Class, initargs) = begin
-    compute_slots(instance)
-end
 
 
-new(class; initargs...) = 
-    let instance = allocate_instance(class)
-        initialize(instance, initargs)
-        instance
-    end
+@defclass(BuiltInClass, [Class], [])
+
+@defclass(_String, [String], [], metaclass=BuiltInClass)
+@defclass(_Bool, [Bool], [], metaclass=BuiltInClass)
+@defclass(_Float64, [Float64], [], metaclass=BuiltInClass)
+@defclass(_Int64, [Int64], [], metaclass=BuiltInClass)
+
+class_of(instance::String) = _String
+class_of(instance::Int64) = _Int64
+class_of(instance::Bool) = _Bool
+class_of(instance::Float64) = _Float64
