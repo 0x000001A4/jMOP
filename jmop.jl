@@ -373,16 +373,17 @@ macro defmethod(expr)
 end
 
 function defineClassOptionsMethods(parsedDirectSlots, spec)
-    quote
-        for slot in $(parsedDirectSlots)
-            if !ismissing(slot.reader)
-                create_method(compute_slot_reader_expr(slot.reader, $(spec)).args[2])
-            end
-            if !ismissing(slot.writer) 
-                create_method(compute_slot_writer_expr(slot.writer, $(spec)).args[2])
-            end
+    expr_string = "begin\n"    
+    for slot in parsedDirectSlots
+        if !ismissing(slot.reader)
+            expr_string *= string(create_method(compute_slot_reader_expr(slot.reader, spec).args[2])) * "\n"
+        end
+        if !ismissing(slot.writer) 
+            expr_string *= string(create_method(compute_slot_writer_expr(slot.writer, spec).args[2])) * "\n"
         end
     end
+    expr_string *= "\nend"
+    return Meta.parse(expr_string)
 end
 
 function parseKwargs(kwargs)
