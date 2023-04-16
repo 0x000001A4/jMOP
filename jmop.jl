@@ -1,7 +1,7 @@
 import Base: ==
 import Base.show
 using DataStructures
-
+import Base: +, -, *, /
 
 #=
 All metaobjects in jMOP follow this structure: they consist of a vector that contains the object's fields.
@@ -11,6 +11,79 @@ All metaobjects in jMOP follow this structure: they consist of a vector that con
 
 mutable struct Metaobject
     value::Vector{Any}
+end
+
+function operationCheckMetaobject(o::Metaobject, op::String)
+    if class_of(o) !== Slot throw(error("Can only $(op) Metaobjects that are Slots")) end
+end
+
+# Define addition
+function Base.:+(a::Metaobject, b::Any)
+    operationCheckMetaobject(a, "add")
+    return a.slotValue + b
+end
+
+# Define addition
+function Base.:+(a::Metaobject, b::Metaobject)
+    operationCheckMetaobject(a, "add")
+    return a.slotValue + b.slotValue
+end
+
+# Define addition
+function Base.:+(a::Metaobject, b::Any)
+    operationCheckMetaobject(a, "add")
+    return a.slotValue + b
+end
+
+function Base.:-(a::Metaobject, b::Metaobject)
+    operationCheckMetaobject(a, "sub")
+    operationCheckMetaobject(b, "sub")
+    return a.slotValue - b.slotValue
+end
+
+function Base.:-(a::Metaobject, b::Metaobject)
+    operationCheckMetaobject(a, "sub")
+    return a.slotValue - b.slotValue
+end
+
+function Base.:-(a::Metaobject, b::Any)
+    operationCheckMetaobject(a, "sub")
+    return a.slotValue - b
+end
+
+
+
+function Base.:*(a::Metaobject, b::Metaobject)
+    operationCheckMetaobject(a, "mul")
+    operationCheckMetaobject(b, "mul")
+    return a.slotValue * b.slotValue
+end
+
+function Base.:*(a::Metaobject, b::Metaobject)
+    operationCheckMetaobject(a, "mul")
+    return a.slotValue * b.slotValue
+end
+
+function Base.:*(a::Metaobject, b::Any)
+    operationCheckMetaobject(a, "mul")
+    return a.slotValue * b
+end
+
+
+function Base.:/(a::Metaobject, b::Metaobject)
+    operationCheckMetaobject(a, "div")
+    operationCheckMetaobject(b, "div")
+    return a.slotValue / b.slotValue
+end
+
+function Base.:-(a::Metaobject, b::Metaobject)
+    operationCheckMetaobject(a, "div")
+    return a.slotValue / b.slotValue
+end
+
+function Base.:-(a::Metaobject, b::Any)
+    operationCheckMetaobject(a, "div")
+    return a.slotValue / b
 end
 
 #=
@@ -222,14 +295,14 @@ In order to access or modify the properties of an instance of a Metaobject (with
 - Other metaobjects look in the structure of its class for a slot with the name matching the property and once they find it they follow the same process as above.
 =#
 
-isMetaclass(instance) = class_of(instance) !== Class && Class === class_of(class_of(instance))
+isMetaclass(instance) = Class !== instance && Class !== class_of(instance) && Class in class_cpl(class_of(instance))
 
 function Base.getproperty(instance::Metaobject, property::Symbol)
     if property == :value
         throw(ArgumentError("The value field should not be accessed directly."))
     elseif class_of(instance) === Slot
         instance[1+findall(slot -> slot[3] == property, Slot[6])[1]]
-    elseif instance === Class && property == :slots 
+    elseif instance === Class && property == :slots
         instance[6]
     elseif isMetaclass(instance) # class_of(instance) is metaclass; instance is not a direct instance of Class
         foundIdx = findall(slot -> slot.name == property, class_of(instance).direct_slots)
@@ -238,17 +311,34 @@ function Base.getproperty(instance::Metaobject, property::Symbol)
             foundIdx = findall(slot -> slot.name == property, Class.slots)
             if length(foundIdx) == 0 throw(error("Could not find a field named $(property)")) end
             instance[1+length(class_of(instance).direct_slots)+foundIdx[1]]
-        end   
-    else
+        end
+    elseif property in [:name, :direct_superclasses, :direct_slots, :cpl, :slots, :direct_subclasses, :direct_methods]
         foundIdx = findall(slot -> slot.name == property, class_of(instance).slots)
         if length(foundIdx) == 0 throw(error("Could not find a field named $(property)")) end
+
         instance[1+foundIdx[1]]
+    else
+        foundIdx = 1
+        for _class in class_cpl(class_of(instance) === Class ? instance : class_of(instance))#[2:end]
+            direct_slots = _class.direct_slots
+            temp = findall(slot -> slot.name == property, direct_slots)
+            if length(temp) == 0
+                foundIdx += length(direct_slots)
+                continue
+            end
+
+            return instance[foundIdx + temp[1]]
+        end
+
+        throw(error("Could not find a field named $(property)"))
     end
 end
 
 function Base.setproperty!(instance::Metaobject, property::Symbol, value::Any)
     if property == :value
         throw(ArgumentError("The value field should not be accessed directly."))
+    elseif class_of(instance) === Slot
+        instance[1+findall(slot -> slot[3] == property, Slot[6])[1]] = value
     elseif isMetaclass(instance)
         foundIdx = findall(slot -> slot.name == property, class_of(instance).direct_slots)
         if length(foundIdx) > 0 instance[1+foundIdx[1]] = value
@@ -257,8 +347,26 @@ function Base.setproperty!(instance::Metaobject, property::Symbol, value::Any)
             if length(foundIdx) == 0 throw(error("Could not find a field named $(property)")) end
             instance[1+length(class_of(instance).direct_slots)+foundIdx[1]] = value
         end
+    elseif property in [:name, :direct_superclasses, :direct_slots, :cpl, :slots, :direct_subclasses, :direct_methods]
+        foundIdx = findall(slot -> slot.name == property, class_of(instance).slots)
+        if length(foundIdx) == 0 throw(error("Could not find a field named $(property)")) end
+
+        instance[1+foundIdx[1]] = value
     else
-        instance[1+findall(slot -> slot.name == property, class_of(instance).slots)[1]] = value
+        foundIdx = 1
+        for _class in class_cpl(class_of(instance) === Class ? instance : class_of(instance))#[2:end]
+            direct_slots = _class.direct_slots
+            temp = findall(slot -> slot.name == property, direct_slots)
+            if length(temp) == 0
+                foundIdx += length(direct_slots)
+                continue
+            end
+
+            instance[foundIdx + temp[1]] = value
+            return
+        end
+
+        throw(error("Could not find a field named $(property)"))
     end
 end
 
@@ -279,14 +387,14 @@ method_specializers(method::Metaobject) = method.specializers
 
 
 function compute_cpl(instance)
-    println("\n\n@ new compute cpl\n")
+    # println("\n\n@ new compute cpl\n")
     ObjectInSupers = false
     cpl = []
     supersQueue = Queue{Metaobject}()
     enqueue!(supersQueue, instance)
     while !isempty(supersQueue)
         super = dequeue!(supersQueue)
-        println(class_name(super))
+        # println(class_name(super))
         for _super in super.direct_superclasses
             if isMetaobject(_super) enqueue!(supersQueue, _super) end
         end
@@ -299,7 +407,7 @@ function compute_cpl(instance)
     return cpl
 end
 
-compute_slots(instance::Metaobject) = vcat(map(class -> class_direct_slots(class), class_cpl(class_of(instance)))...)
+compute_slots(instance::Metaobject) = vcat(map(class -> class_direct_slots(class), class_cpl(instance)[2:end])...)
 map(object -> object.cpl = compute_cpl(object), [Top, Object, Slot, Class, GenericFunction, MultiMethod])
 
 
@@ -340,7 +448,6 @@ function parseDirectSlots(direct_slots, metaclass)
     end
     return directSlots
 end
-
 
 function compute_slot_reader_expr(method, spec, field)
     quote 
@@ -402,21 +509,7 @@ function defineClassOptionsMethods(parsedDirectSlots, spec)
     writer_methods = [create_method(compute_slot_writer_expr(slot.writer, spec, slot.name).args[2]) for slot in writerSlots]
     all_methods = vcat(reader_methods, writer_methods)
     quote
-      $(all_methods...)
-    end
-end
-
-function create_initform_expr(parsedDirectSlots, name, i)
-    quote
-        $(name).slots[$(i)][5] = $(parsedDirectSlots[i].initform)
-    end
-end
-
-function compute_class_initforms(parsedDirectSlots, name)
-    exprs = [create_initform_expr(parsedDirectSlots, name, i) 
-        for i in range(1,length(parsedDirectSlots)) if !ismissing(parsedDirectSlots[i].initform)]
-    quote
-        $(exprs...)
+        $(all_methods...)
     end
 end
 
@@ -454,7 +547,9 @@ copySlotToInstance(slot::Metaobject) = Metaobject([Slot, Object, slot.name, slot
 @defmethod allocate_instance(class::Class) = 
     Metaobject([
         class,
-        [map(copySlotToInstance, class_direct_slots(_class)) for _class in class_cpl(class)[end-1:1]]...
+        map(copySlotToInstance, vcat(class_slots(class), class_direct_slots(class)))...,
+        #vcat([map(copySlotToInstance, class_direct_slots(_class)) for _class in class_cpl(class)[end:-1:1]]...)...
+        #[map(copySlotToInstance, class_direct_slots(_class)) for _class in class_cpl(class)[end:-1:1]]...
 ])
 
 @defmethod initialize(instance::Object, initargs) = begin
@@ -470,6 +565,8 @@ copySlotToInstance(slot::Metaobject) = Metaobject([Slot, Object, slot.name, slot
 end
 
 @defmethod initialize(instance::Class, initargs) = call_next_method()
+@defmethod initialize(generic::GenericFunction, initargs) = call_next_method()
+@defmethod initialize(method::MultiMethod, initargs) = call_next_method()
 
 new(class; initargs...) = 
     let instance = allocate_instance(class)
@@ -576,8 +673,7 @@ macro defclass(name, direct_superclasses, direct_slots, kwargs...)
         $(compute_class_cpl(name))
         $(defineClassOptionsMethods(parsedDirectSlots, name))
         $(compute_class_slots(name))
-        $(compute_class_initforms(parsedDirectSlots, name))
-        begin end
+        # $(compute_class_initforms(parsedDirectSlots, name))
     end
 end
 
@@ -594,3 +690,4 @@ class_of(instance::String) = _String
 class_of(instance::Int64) = _Int64
 class_of(instance::Bool) = _Bool
 class_of(instance::Float64) = _Float64
+
