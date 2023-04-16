@@ -386,6 +386,19 @@ function defineClassOptionsMethods(parsedDirectSlots, spec)
     return Meta.parse(expr_string)
 end
 
+function compute_class_initforms(parsedDirectSlots, spec)
+    expr_string = "begin\n"
+    i = 1
+    for slot in parsedDirectSlots
+        if !ismissing(slot.initform)
+            expr_string *= string(spec) * ".slots[" * string(i) * "][5] = " * string(slot.initform) * "\n" 
+        end
+        i += 1
+    end
+    expr_string *= "end"
+    return Meta.parse(expr_string)
+end
+
 function parseKwargs(kwargs)
     for expr in kwargs
         if expr.args[1] == :metaclass
@@ -418,6 +431,12 @@ end
 ])
 
 @defmethod initialize(instance::Object, initargs) = begin
+    class = class_of(instance)
+    for slot in class.slots
+        if !ismissing(slot.initform)
+            setproperty!(instance, slot.name, slot.initform)
+        end
+    end
     for (index, value) in zip(keys(initargs), collect(values(initargs)))
         setproperty!(instance, index, value)
     end
@@ -524,6 +543,8 @@ macro defclass(name, direct_superclasses, direct_slots, kwargs...)
         $(compute_class_cpl(name))
         $(defineClassOptionsMethods(parsedDirectSlots, name))
         $(compute_class_slots(name))
+        $(compute_class_initforms(parsedDirectSlots, name))
+        begin end
     end
 end
 
