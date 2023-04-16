@@ -86,8 +86,8 @@ class_of(instance::Metaobject) = instance[1]
 -> GenericFunction 
 -> MultiMethod
 
-Note: All pre-defined metaobjects are an instance of class so they will have the same structure:
-[Class, name, direct_superclasses, direct_slots, cpl, slots, direct_subclasses, direct_methods]
+#Note: All pre-defined metaobjects are an instance of class so they will have the same structure:
+#[Class, name, direct_superclasses, direct_slots, cpl, slots, direct_subclasses, direct_methods]
 =#################################################################################################
 
 ####################
@@ -386,17 +386,18 @@ function defineClassOptionsMethods(parsedDirectSlots, spec)
     return Meta.parse(expr_string)
 end
 
-function compute_class_initforms(parsedDirectSlots, spec)
-    expr_string = "begin\n"
-    i = 1
-    for slot in parsedDirectSlots
-        if !ismissing(slot.initform)
-            expr_string *= string(spec) * ".slots[" * string(i) * "][5] = " * string(slot.initform) * "\n" 
-        end
-        i += 1
+function create_initform_expr(parsedDirectSlots, name, i)
+    quote
+        $(name).slots[$(i)][5] = $(parsedDirectSlots[i].initform)
     end
-    expr_string *= "end"
-    return Meta.parse(expr_string)
+end
+
+function compute_class_initforms(parsedDirectSlots, name)
+    exprs = [create_initform_expr(parsedDirectSlots, name, i) 
+        for i in range(1,length(parsedDirectSlots)) if !ismissing(parsedDirectSlots[i].initform)]
+    quote
+        $(exprs...)
+    end
 end
 
 function parseKwargs(kwargs)
