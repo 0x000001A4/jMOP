@@ -86,8 +86,8 @@ class_of(instance::Metaobject) = instance[1]
 -> GenericFunction 
 -> MultiMethod
 
-Note: All pre-defined metaobjects are an instance of class so they will have the same structure:
-[Class, name, direct_superclasses, direct_slots, cpl, slots, direct_subclasses, direct_methods]
+#Note: All pre-defined metaobjects are an instance of class so they will have the same structure:
+#[Class, name, direct_superclasses, direct_slots, cpl, slots, direct_subclasses, direct_methods]
 =#################################################################################################
 
 ####################
@@ -373,15 +373,27 @@ macro defmethod(expr)
 end
 
 function defineClassOptionsMethods(parsedDirectSlots, spec)
+    readers = [slot.reader for slot in parsedDirectSlots if !ismissing(slot.reader)]
+    writers = [slot.writer for slot in parsedDirectSlots if !ismissing(slot.writer)]
+    reader_methods = [create_method(compute_slot_reader_expr(reader, spec).args[2]) for reader in readers]
+    writer_methods = [create_method(compute_slot_writer_expr(writer, spec).args[2]) for writer in writers]
+    all_methods = vcat(reader_methods, writer_methods)
     quote
-        for slot in $(parsedDirectSlots)
-            if !ismissing(slot.reader)
-                create_method(compute_slot_reader_expr(slot.reader, $(spec)).args[2])
-            end
-            if !ismissing(slot.writer) 
-                create_method(compute_slot_writer_expr(slot.writer, $(spec)).args[2])
-            end
-        end
+      $(all_methods...)
+    end
+end
+
+function create_initform_expr(parsedDirectSlots, name, i)
+    quote
+        $(name).slots[$(i)][5] = $(parsedDirectSlots[i].initform)
+    end
+end
+
+function compute_class_initforms(parsedDirectSlots, name)
+    exprs = [create_initform_expr(parsedDirectSlots, name, i) 
+        for i in range(1,length(parsedDirectSlots)) if !ismissing(parsedDirectSlots[i].initform)]
+    quote
+        $(exprs...)
     end
 end
 
@@ -417,6 +429,12 @@ end
 ])
 
 @defmethod initialize(instance::Object, initargs) = begin
+    class = class_of(instance)
+    for slot in class.slots
+        if !ismissing(slot.initform)
+            setproperty!(instance, slot.name, slot.initform)
+        end
+    end
     for (index, value) in zip(keys(initargs), collect(values(initargs)))
         setproperty!(instance, index, value)
     end
@@ -523,6 +541,8 @@ macro defclass(name, direct_superclasses, direct_slots, kwargs...)
         $(compute_class_cpl(name))
         $(defineClassOptionsMethods(parsedDirectSlots, name))
         $(compute_class_slots(name))
+        $(compute_class_initforms(parsedDirectSlots, name))
+        begin end
     end
 end
 
