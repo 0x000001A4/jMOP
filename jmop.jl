@@ -407,7 +407,7 @@ function compute_cpl(instance)
     return cpl
 end
 
-compute_slots(instance::Metaobject) = vcat(map(class -> class_direct_slots(class), class_cpl(instance)[2:end])...)
+std_compute_slots(instance::Metaobject) = vcat(map(class -> class_direct_slots(class), class_cpl(instance))...)
 map(object -> object.cpl = compute_cpl(object), [Top, Object, Slot, Class, GenericFunction, MultiMethod])
 
 
@@ -539,7 +539,7 @@ compute_class_cpl(instance) = quote
 end
 
 compute_class_slots(instance) = quote
-    $(instance).slots = compute_slots($instance)
+    $(instance).slots = std_compute_slots($instance)
 end
 
 copySlotToInstance(slot::Metaobject) = Metaobject([Slot, Object, slot.name, slot.reader, slot.writer, slot.initform, slot.slotValue])
@@ -673,11 +673,8 @@ macro defclass(name, direct_superclasses, direct_slots, kwargs...)
         $(compute_class_cpl(name))
         $(defineClassOptionsMethods(parsedDirectSlots, name))
         $(compute_class_slots(name))
-        # $(compute_class_initforms(parsedDirectSlots, name))
     end
 end
-
-
 
 @defclass(BuiltInClass, [Class], [])
 
@@ -691,3 +688,108 @@ class_of(instance::Int64) = _Int64
 class_of(instance::Bool) = _Bool
 class_of(instance::Float64) = _Float64
 
+
+
+#-#-#-#-#--#-#-#-#-#-#
+#       TESTS        #
+#-#-#-#-#--#-#-#-#-#-#
+
+@defclass(Shape, [], [])
+@defclass(Device, [], [])
+
+@defclass(Line, [Shape], [from, to])
+@defclass(Circle, [Shape], [center, radius])
+
+@defclass(Screen, [Device], [])
+@defclass(Printer, [Device], [])
+
+@defgeneric draw(shape, device)
+
+@defmethod draw(shape::Line, device::Screen) = println("Drawing a Line on Screen")
+@defmethod draw(shape::Circle, device::Screen) = println("Drawing a Circle on Screen")
+@defmethod draw(shape::Line, device::Printer) = println("Drawing a Line on Printer")
+@defmethod draw(shape::Circle, device::Printer) = println("Drawing a Circle on Printer")
+
+@defclass(ColorMixin, [],
+    [[color, reader=get_color, writer=set_color!]])
+
+@defmethod draw(s::ColorMixin, d::Device) =
+    let previous_color = get_device_color(d)
+        set_device_color!(d, get_color(s))
+        call_next_method()
+        set_device_color!(d, previous_color)
+    end
+
+@defclass(ColoredLine, [ColorMixin, Line], [])
+@defclass(ColoredCircle, [ColorMixin, Circle], [])
+
+@defclass(ColoredPrinter, [Printer],
+    [[ink=:black, reader=get_device_color, writer=_set_device_color!]])
+
+@defmethod set_device_color!(d::ColoredPrinter, color) = begin
+    println("Changing printer ink color to $color")
+    _set_device_color!(d, color)
+end
+
+let shapes = [new(Line), new(ColoredCircle, color=:red), new(ColoredLine, color=:blue)],
+    printer = new(ColoredPrinter, ink=:black)
+
+    for shape in shapes
+        # println("_/ Drawing $(class_of(shape).name)... \\_")
+        draw(shape, printer)
+        # println("\\_ $(class_of(shape).name) drawn. _/")
+    end
+end
+
+@defclass(A, [], [])
+@defclass(B, [], [])
+@defclass(C, [], [])
+@defclass(D, [A, B], [])
+@defclass(E, [A, C], [])
+@defclass(F, [D, E], [])
+
+compute_cpl(F)
+
+@defclass(CountingClass, [Class],
+    [counter=0])
+
+@defmethod allocate_instance(class::CountingClass) = begin
+        class.counter += 1
+        call_next_method()
+    end
+
+@defclass(CountingFoo, [], [], metaclass=CountingClass)
+@defclass(CountingBar, [], [], metaclass=CountingClass)
+
+new(CountingFoo)
+new(CountingFoo)
+new(CountingBar)
+CountingFoo.counter
+CountingBar.counter
+if CountingFoo.counter != 2 throw("CountingFoo counter is $(CountingFoo.counter), it should be 2 >:(") end
+if CountingBar.counter != 1 throw("CountingBar counter is $(CountingBar.counter), it should be 1 >:(") end
+
+@defmethod compute_slots(instance::Class) = vcat(map(class -> class_direct_slots(class), class_cpl(instance))...)
+
+@defclass(Foo, [], [a=1, b=2])
+@defclass(Bar, [], [b=3, c=4])
+@defclass(FooBar, [Foo, Bar], [a=5, d=6])
+
+class_slots(FooBar)
+
+foobar1 = new(FooBar)
+println(foobar1.a)
+println(foobar1.b)
+println(foobar1.c)
+println(foobar1.d)
+
+@defclass(AvoidCollisionsClass, [Class], [])
+
+@defmethod compute_slots(class::AvoidCollisionsClass) =
+    let slots = call_next_method(),
+        duplicates = symdiff(slots, unique(slots))
+        isempty(duplicates) ? slots :
+        error("Multiple occurrences of slots: $(join(map(string, duplicates), ", "))")
+    end
+
+@defclass(FooBar2, [Foo, Bar], [a=5, d=6], metaclass=AvoidCollisionsClass)
