@@ -373,17 +373,14 @@ macro defmethod(expr)
 end
 
 function defineClassOptionsMethods(parsedDirectSlots, spec)
-    expr_string = "begin\n"    
-    for slot in parsedDirectSlots
-        if !ismissing(slot.reader)
-            expr_string *= string(create_method(compute_slot_reader_expr(slot.reader, spec).args[2])) * "\n"
-        end
-        if !ismissing(slot.writer) 
-            expr_string *= string(create_method(compute_slot_writer_expr(slot.writer, spec).args[2])) * "\n"
-        end
+    readers = [slot.reader for slot in parsedDirectSlots if !ismissing(slot.reader)]
+    writers = [slot.writer for slot in parsedDirectSlots if !ismissing(slot.writer)]
+    reader_methods = [create_method(compute_slot_reader_expr(reader, spec).args[2]) for reader in readers]
+    writer_methods = [create_method(compute_slot_writer_expr(writer, spec).args[2]) for writer in writers]
+    all_methods = vcat(reader_methods, writer_methods)
+    quote
+      $(all_methods...)
     end
-    expr_string *= "\nend"
-    return Meta.parse(expr_string)
 end
 
 function create_initform_expr(parsedDirectSlots, name, i)
